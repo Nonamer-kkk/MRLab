@@ -1,39 +1,64 @@
 # MRLab_E10_24371119
 
-## 项目基本信息
+## 项目信息
 
 | 项目 | 内容 |
 | --- | --- |
-| 项目名称 | MRLab_E10_24371119 |
-| 实验名称 | 待填写 |
-| 学生姓名 | 待填写 |
-| 学号 | 24371119 |
+| 实验名称 | 焦耳定律短路起火虚拟仿真系统 |
+| 学生姓名 / 学号 | 容易为 / 24371119 |
 | Unity 版本 | 2022.3.62f3c1 |
 | 渲染管线 | URP 14.0.12 |
-| MR SDK | 未安装（规范要求：Meta XR SDK 205） |
-| 当前开发阶段 | PC |
-| 当前版本 | 0.1.0 |
+| 输入系统 | Unity Input System 1.14.2 |
+| 文字 | TMP 3.0.7 + 项目内 Noto Sans CJK SC |
+| MR SDK | Meta XR SDK 205（后续 MR 阶段接入；本次 PC 版暂不安装） |
+| 当前开发阶段 / 版本 | PC / 1.0.0 |
 
-## 已完成功能
+## 项目范围
 
-- 已创建 Unity 2022.3.62f3c1 工程。
-- 已配置 Linear 色彩空间、URP 14.0.12 和 Unity Input System 1.14.2。
-- 已建立 `Assets/_Project/Scenes/PC`、`Assets/_Project/Scenes/MR`、`Assets/_Project/Scenes/CAVE` 场景目录。
-- 已建立 `Assets/_Project/Scripts/Interaction/PC`、`MR`、`CAVE` 交互脚本目录。
-- 已创建 `Assets/_Project/Scenes/PC/01_PC_Main`，并按规范建立 PC 场景 Hierarchy。
-- 已导入 TMP Essential Resources，并创建项目内置的 `NotoSansCJKsc-Regular SDF` 中文字体资产。
-- 已完成 Windows x86-64 Build，并验证程序能够正常启动。
+本阶段制作实验室内的单人、单线路焦耳定律实验，包含连续温升、材料变化和短路起火，不模拟宿舍环境。MR/CAVE 仅保留场景、交互脚本和 Build 目录，后续复用同一实验核心。
 
-## 已知问题
+## 启动
 
-- 当前未检测到 Meta XR SDK。
-- 当前工程完整路径 `E:\Unity Project\MRLab_E10_24371119` 含空格，不符合规范中的无空格路径要求。
-- 实验名称和学生姓名仍需填写。
+用指定 Unity 版本打开工程，再打开 `Assets/_Project/Scenes/PC/01_PC_Main.unity` 运行。正式 Windows x86-64 程序输出在 `Builds/PC`。集成后的构建和启动结果以 `PCValidation.md` 为准。
 
-## 目录说明
+不要在已制作实验内容的场景上执行旧 `ProjectBootstrap.InitializeProject`：它会重新创建空的主场景。实验内容由 `JouleSceneBuilder` 构建。
 
-- `Assets/_Project`：本项目正式使用的 Unity 资源。
-- `Assets/ThirdParty`：外部获取的 Unity 资源和插件。
-- `Docs`：项目设计、资产清单、第三方资源登记和本说明。
-- `SourceAssets`：模型、图片、音频等原始制作文件。
-- `Builds`：PC、MR、CAVE 构建输出。
+## 操作
+
+按界面提示完成巡检，选择线径、负载、接触电阻、保护器和故障位置，通电后触发短路或接触不良。处置顺序为先断电/隔离，再报警和灭火。最后查看电流/温度曲线、因果链回放、上一轮比较，或导出 CSV。
+
+| 快捷键/鼠标 | 功能 |
+| --- | --- |
+| `P` | 通电/断电 |
+| `F` | 触发短路 |
+| `G` | 触发接触不良 |
+| `E` | 紧急隔离 |
+| `A` | 报警 |
+| `X` | 灭火器 |
+| `T` | 热风险叠加 |
+| `R` | 重置实验 |
+| `Space` | 暂停/继续 |
+| 右键拖动 / 滚轮 | 环绕观察 / 缩放 |
+| `Home` | 镜头复位 |
+
+所有实验操作均有 UI 按钮，核心逻辑不依赖特定按键。复盘通过时间滑条查看记录；CSV 导出位置为 `Application.persistentDataPath/Results`，本机为 `C:/Users/71076/AppData/LocalLow/MRLab/JouleLab_E10/Results`。长路径在界面可能省略，文件名以该目录中的 CSV 为准。
+
+## 完成状态
+
+已完成实验室场景、单线路电路/热学/材料模型、PC 交互与 TMP 中文 UI、短路/接触不良、保护器、断电/报警/灭火、实时曲线、回放、双轮对比、CSV 和 Reset。Windows x86-64 实验版已构建，0 错误、0 警告，12 项自动测试全部通过。
+
+已在实际 Player 中验证干净启动、巡检、线径切换、通电、短路电流突增、连续温升及材料状态、错误灭火拦截、断电/报警、复盘拖动、CSV 导出、重置与双轮曲线。验证范围和仍待人工检查的细项见 `PCValidation.md`。
+
+## 已知问题与边界
+
+- 当前工程路径 `E:\Unity Project\MRLab_E10_24371119` 的父目录含空格，与文档无空格规则不一致；本次保留工程位置，迁移前须另行安排。
+- 实时集总参数模型用于教学趋势，不替代专业消防鉴定或有限元热分析；材料阈值不是现实消防判据。
+- 本机 1600×900 静态实验室实测平均 164.51 FPS，P95 帧时间 6.07 ms；未单独测量烟火高负载性能，不外推到其他电脑或设备。
+- 自动操作工具的键盘注入未可靠触发快捷键，尚需物理键盘复核；各实验功能可直接使用鼠标按钮。
+- 本次范围是 PC；Meta XR SDK、Quest 和 CAVE 功能待后续阶段实现。
+
+## 目录
+
+`Assets/_Project` 存正式项目资产；`Assets/ThirdParty` 存外部资源；`Docs` 存设计、清单、登记与验收记录；`SourceAssets` 存制作源文件和参考资料；`Builds` 存程序输出。字体来源和许可见 `ThirdPartyAssets.md`，实验规则见 `ExperimentDesign.md`。
+
+空的正式预留目录通过 `.gitkeep` 保留，防止 Git 新检出丢失。Builds 按规范不提交，首次检出后由项目初始化流程或手动建立 PC/MR/CAVE 输出目录。

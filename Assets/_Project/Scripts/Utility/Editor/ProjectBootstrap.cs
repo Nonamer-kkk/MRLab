@@ -21,13 +21,19 @@ namespace MRLab.Editor
         private const string PipelinePath = SettingsDirectory + "/PC_UniversalRenderPipeline.asset";
         private const string ChineseFontPath = "Assets/_Project/Fonts/NotoSansCJKsc-Regular.otf";
         private const string ChineseFontAssetPath = "Assets/_Project/Fonts/NotoSansCJKsc-Regular SDF.asset";
+        private const string TmpEssentialResourcesPath = "Assets/ThirdParty/TextMesh Pro";
+        private const string TmpSettingsPath = TmpEssentialResourcesPath + "/Resources/TMP Settings.asset";
 
         [MenuItem("MRLab/Import TMP Essential Resources")]
         public static void ImportTmpEssentialResourcesBatch()
         {
             TMP_PackageResourceImporter.ImportResources(true, false, false);
             AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
-            Debug.Log("TMP Essential Resources import requested.");
+            MoveTmpEssentialResourcesToThirdParty();
+            CreateOrRepairChineseTmpFontAsset();
+            ConfigureTmpSettings();
+            AssetDatabase.SaveAssets();
+            Debug.Log("TMP Essential Resources imported under Assets/ThirdParty and configured for the project Chinese font.");
         }
 
         [MenuItem("MRLab/Initialize Project")]
@@ -41,13 +47,28 @@ namespace MRLab.Editor
 
             ConfigureUniversalRenderPipeline();
             EnsureTmpEssentialResourcesArePresent();
-            CreateChineseTmpFontAsset();
+            CreateOrRepairChineseTmpFontAsset();
+            ConfigureTmpSettings();
             CreatePcMainScene();
             ConfigureBuildSettings();
 
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
             Debug.Log("MRLab project initialization completed.");
+        }
+
+        [MenuItem("MRLab/Validate Document Compliance")]
+        public static void ValidateDocumentCompliance()
+        {
+            EnsureProjectFolders();
+            AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
+            EnsureTmpEssentialResourcesArePresent();
+            CreateOrRepairChineseTmpFontAsset();
+            ConfigureTmpSettings();
+            ConfigureBuildSettings();
+            AssetDatabase.SaveAssets();
+            AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
+            Debug.Log("MRLab document-compliance validation completed.");
         }
 
         [MenuItem("MRLab/Build Windows x86-64")]
@@ -152,7 +173,9 @@ namespace MRLab.Editor
 
         private static void EnsureTmpEssentialResourcesArePresent()
         {
-            if (File.Exists("Assets/TextMesh Pro/Resources/TMP Settings.asset"))
+            MoveTmpEssentialResourcesToThirdParty();
+
+            if (File.Exists(TmpSettingsPath))
             {
                 return;
             }
@@ -161,36 +184,120 @@ namespace MRLab.Editor
                 "TMP Essential Resources are missing. Run ImportTmpEssentialResourcesBatch first.");
         }
 
-        private static void CreateChineseTmpFontAsset()
+        private static void MoveTmpEssentialResourcesToThirdParty()
         {
-            if (AssetDatabase.LoadAssetAtPath<TMP_FontAsset>(ChineseFontAssetPath) != null)
+            const string defaultImportPath = "Assets/TextMesh Pro";
+
+            if (!AssetDatabase.IsValidFolder(defaultImportPath))
             {
                 return;
             }
 
+            if (AssetDatabase.IsValidFolder(TmpEssentialResourcesPath))
+            {
+                throw new InvalidOperationException(
+                    $"Both {defaultImportPath} and {TmpEssentialResourcesPath} exist. Merge them before continuing.");
+            }
+
+            string error = AssetDatabase.MoveAsset(defaultImportPath, TmpEssentialResourcesPath);
+            if (!string.IsNullOrEmpty(error))
+            {
+                throw new InvalidOperationException($"Unable to move TMP Essential Resources: {error}");
+            }
+        }
+
+        private static void CreateOrRepairChineseTmpFontAsset()
+        {
             Font sourceFont = AssetDatabase.LoadAssetAtPath<Font>(ChineseFontPath);
             if (sourceFont == null)
             {
                 throw new FileNotFoundException("Chinese font source was not imported.", ChineseFontPath);
             }
 
-            TMP_FontAsset fontAsset = TMP_FontAsset.CreateFontAsset(
-                sourceFont,
-                90,
-                9,
-                GlyphRenderMode.SDFAA,
-                1024,
-                1024,
-                AtlasPopulationMode.Dynamic,
-                true);
+            TMP_FontAsset fontAsset = AssetDatabase.LoadAssetAtPath<TMP_FontAsset>(ChineseFontAssetPath);
             if (fontAsset == null)
             {
-                throw new InvalidOperationException(
-                    "TMP failed to create a Chinese font asset from NotoSansCJKsc-Regular.otf.");
+                fontAsset = TMP_FontAsset.CreateFontAsset(
+                    sourceFont,
+                    90,
+                    9,
+                    GlyphRenderMode.SDFAA,
+                    1024,
+                    1024,
+                    AtlasPopulationMode.Dynamic,
+                    true);
+                if (fontAsset == null)
+                {
+                    throw new InvalidOperationException(
+                        "TMP failed to create a Chinese font asset from NotoSansCJKsc-Regular.otf.");
+                }
+
+                fontAsset.name = "NotoSansCJKsc-Regular SDF";
+                AssetDatabase.CreateAsset(fontAsset, ChineseFontAssetPath);
             }
 
-            fontAsset.name = "NotoSansCJKsc-Regular SDF";
-            AssetDatabase.CreateAsset(fontAsset, ChineseFontAssetPath);
+            Texture2D atlasTexture = fontAsset.atlasTextures != null && fontAsset.atlasTextures.Length > 0
+                ? fontAsset.atlasTextures[0]
+                : null;
+            if (atlasTexture == null)
+            {
+                atlasTexture = new Texture2D(0, 0, TextureFormat.Alpha8, false)
+                {
+                    name = "NotoSansCJKsc-Regular Atlas"
+                };
+                fontAsset.atlasTextures = new[] { atlasTexture };
+                AssetDatabase.AddObjectToAsset(atlasTexture, fontAsset);
+            }
+
+            if (fontAsset.material == null)
+            {
+                Shader shader = Shader.Find("TextMeshPro/Distance Field");
+                if (shader == null)
+                {
+                    throw new InvalidOperationException("The TextMeshPro distance-field shader is unavailable.");
+                }
+
+                var material = new Material(shader)
+                {
+                    name = "NotoSansCJKsc-Regular Atlas Material"
+                };
+                material.SetTexture(ShaderUtilities.ID_MainTex, atlasTexture);
+                material.SetFloat(ShaderUtilities.ID_TextureWidth, fontAsset.atlasWidth);
+                material.SetFloat(ShaderUtilities.ID_TextureHeight, fontAsset.atlasHeight);
+                material.SetFloat(ShaderUtilities.ID_GradientScale, fontAsset.atlasPadding + 1);
+                material.SetFloat(ShaderUtilities.ID_WeightNormal, fontAsset.normalStyle);
+                material.SetFloat(ShaderUtilities.ID_WeightBold, fontAsset.boldStyle);
+                fontAsset.material = material;
+                AssetDatabase.AddObjectToAsset(material, fontAsset);
+            }
+
+            fontAsset.atlasPopulationMode = AtlasPopulationMode.Dynamic;
+            fontAsset.isMultiAtlasTexturesEnabled = true;
+            EditorUtility.SetDirty(fontAsset);
+        }
+
+        private static void ConfigureTmpSettings()
+        {
+            TMP_Settings settings = AssetDatabase.LoadAssetAtPath<TMP_Settings>(TmpSettingsPath);
+            TMP_FontAsset chineseFontAsset = AssetDatabase.LoadAssetAtPath<TMP_FontAsset>(ChineseFontAssetPath);
+            if (settings == null || chineseFontAsset == null)
+            {
+                throw new InvalidOperationException("TMP Settings or the project Chinese TMP font asset is missing.");
+            }
+
+            var serializedSettings = new SerializedObject(settings);
+            SerializedProperty defaultFont = serializedSettings.FindProperty("m_defaultFontAsset");
+            SerializedProperty fallbackFonts = serializedSettings.FindProperty("m_fallbackFontAssets");
+            if (defaultFont == null || fallbackFonts == null)
+            {
+                throw new InvalidOperationException("TMP font settings properties were not found.");
+            }
+
+            defaultFont.objectReferenceValue = chineseFontAsset;
+            fallbackFonts.arraySize = 1;
+            fallbackFonts.GetArrayElementAtIndex(0).objectReferenceValue = chineseFontAsset;
+            serializedSettings.ApplyModifiedPropertiesWithoutUndo();
+            EditorUtility.SetDirty(settings);
         }
 
         private static void CreatePcMainScene()

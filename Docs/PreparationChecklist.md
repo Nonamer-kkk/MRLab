@@ -1,30 +1,32 @@
 # 项目开始前准备清单
 
-依据《课程项目统一开发规范 V1.3》第17章检查。
+依据《课程项目统一开发规范 V1.3》第17章。最终实验版 Build 与旧空场景验证分开记录。
 
 | 序号 | 准备项目 | 状态 | 说明 |
 | --- | --- | --- | --- |
-| 1 | 安装 Unity 中国版 2022.3.62f3c1 | 已完成 | 当前工程版本为 2022.3.62f3c1。 |
-| 2 | 使用该版本创建 URP 项目 | 已完成 | 已安装并配置 URP 14.0.12。 |
-| 3 | 项目完整路径全部为英文 | 部分完成 | 路径字符为英文，但 `E:\Unity Project` 含空格，需迁移后完全合规。 |
-| 4 | 按规则命名工程 | 已完成 | `MRLab_E10_24371119`。 |
-| 5 | 建立统一 Assets 目录 | 已完成 | 已补齐 `_Project` 与 `ThirdParty` 目录结构。 |
-| 6 | 建立 PC、MR、CAVE 场景目录 | 已完成 | 位于 `Assets/_Project/Scenes`。 |
-| 7 | 建立 PC、MR、CAVE 交互脚本目录 | 已完成 | 位于 `Assets/_Project/Scripts/Interaction`。 |
-| 8 | 建立 PC、MR、CAVE Build 目录 | 已完成 | 位于 `Builds`。 |
-| 9 | 配置 URP 管线配置文件 | 已完成 | 配置文件位于 `Assets/_Project/Settings`。 |
-| 10 | 设置 Color Space 为 Linear | 已完成 | Player Settings 已保存为 Linear。 |
-| 11 | 配置 Unity Input System | 已完成 | Input System 1.14.2，Active Input Handling 为新输入系统。 |
-| 12 | 导入 TMP Essential Resources | 已完成 | 资源位于 `Assets/TextMesh Pro`。 |
-| 13 | 建立项目中文 TMP 字体资源 | 已完成 | 项目内置 Noto Sans CJK SC，不依赖开发电脑系统字体。 |
-| 14 | 创建 01_PC_Main | 已完成 | 位于 `Assets/_Project/Scenes/PC`。 |
-| 15 | 按规范建立 PC 场景 Hierarchy | 已完成 | 已建立 Systems、Environment、Experiment、Interaction、UI、Camera、Debug。 |
-| 16 | 在 Systems 中建立系统对象位置 | 已完成 | 已建立 ExperimentManager、UIManager、AudioManager、InputManager、ResetManager。 |
-| 17 | 建立 Docs 目录及规定文档 | 已完成 | 已建立 ExperimentDesign、AssetList、ThirdPartyAssets、README。 |
-| 18 | 建立 SourceAssets 目录 | 已完成 | 已建立 Models、Images、Audio、Reference。 |
-| 19 | 建立本地 Git 仓库 | 已完成 | 本地仓库已初始化。 |
-| 20 | 配置 Unity 项目 .gitignore | 已完成 | 已忽略 Library、Temp、Logs、obj、Builds 等生成内容。 |
-| 21 | 完成第一次 Git 提交 | 已完成 | 初始化整理完成后提交。 |
-| 22 | 完成 Windows x86-64 Build | 已完成 | 输出位于 `Builds/PC`。 |
-| 23 | 确认 Build 能够正常启动 | 已完成 | 已实际启动，进程响应正常且 Player 日志无启动错误。 |
-| 24 | 检查无误后开始实验开发 | 待填写实验设计 | 工程准备环境已就绪；实验名称、目标、流程和创新点仍需填写。 |
+| 1 | Unity 中国版 2022.3.62f3c1 | 已完成 | ProjectVersion 已记录指定版本 |
+| 2 | 指定版本 URP 工程 | 已完成 | URP 14.0.12 |
+| 3 | 英文且无空格完整路径 | 部分完成 | `E:\Unity Project` 仍含空格 |
+| 4 | 工程命名 | 已完成 | MRLab_E10_24371119 |
+| 5 | 统一 Assets 目录 | 已完成 | `_Project`、`ThirdParty` |
+| 6 | PC/MR/CAVE 场景目录 | 已完成 | `Assets/_Project/Scenes` |
+| 7 | PC/MR/CAVE 交互脚本目录 | 已完成 | `Scripts/Interaction` |
+| 8 | 三端 Build 目录 | 已完成 | `Builds/PC`、`MR`、`CAVE` |
+| 9 | URP 配置 | 已完成 | `Assets/_Project/Settings` |
+| 10 | Linear 色彩空间 | 已完成 | `m_ActiveColorSpace = 1` |
+| 11 | Input System | 已完成 | 1.14.2，`activeInputHandler = 1` |
+| 12 | TMP Essential Resources | 已完成 | 已归档到 `Assets/ThirdParty/TextMesh Pro` |
+| 13 | TMP 中文字体 | 已完成 | Noto 项目字体已设默认和回退，不使用系统字体 |
+| 14 | 创建 PC 主场景 | 已完成 | `Scenes/PC/01_PC_Main.unity` |
+| 15 | PC Hierarchy | 已完成 | 七个规范根节点及 PC 交互子节点 |
+| 16 | 系统对象位置 | 已完成 | ExperimentManager、UIManager、AudioManager、InputManager、ResetManager |
+| 17 | Docs 文档 | 已完成 | 四项规定文档及准备/验收记录 |
+| 18 | SourceAssets | 已完成 | Models、Images、Audio、Reference |
+| 19 | 本地 Git | 已完成 | 仓库已初始化 |
+| 20 | .gitignore | 已完成 | 生成目录和 Builds 不纳入源工程版本管理 |
+| 21 | 首次提交 | 已完成 | 已有工程初始化提交 |
+| 22 | Windows x86-64 Build | 已完成 | 2026-09-28 18:31 实验版 1.0.0，0 错误 / 0 警告 |
+| 23 | Windows 正常启动 | 已完成 | 实际启动主界面：0 A、22°C、完好/正常回路，无自动注入故障 |
+| 24 | 基础检查后正式开发 | PC 首版已完成 | 单线路实验、实验室场景、曲线/回放/CSV 已集成，测试边界见 PCValidation |
+
+PC 版范围按用户要求执行，MR/CAVE 只保留目录与架构。Meta XR SDK 在后续 MR 阶段接入，不阻塞当前 PC 版。

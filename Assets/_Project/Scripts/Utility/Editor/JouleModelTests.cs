@@ -1,0 +1,409 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Reflection;
+using System.Text;
+using UnityEditor;
+using UnityEngine;
+
+namespace MRLab.Joule.Editor
+{
+    /// <summary>
+    /// Small deterministic smoke suite for the teaching model. It deliberately
+    /// avoids NUnit so it can be run from a clean Unity project in one click.
+    /// </summary>
+    public static class JouleModelTests
+    {
+        [MenuItem("MRLab/Run Joule Model Tests")]
+        public static void Run()
+        {
+            var results = new List<TestResult>();
+            RunTest(results, "I2 proportional heating", TestI2ProportionalHeating);
+            RunTest(results, "electrical energy balance and cooling", TestEnergyAndCooling);
+            RunTest(results, "breaker versus unprotected", TestBreakerAndUnprotected);
+            RunTest(results, "thermal stages and reset", TestStagesAndReset);
+            RunTest(results, "wire area trend", TestWireAreaTrend);
+            RunTest(results, "normal circuit and copper resistivity", TestNormalCircuit);
+            RunTest(results, "deterministic replay model", TestDeterminism);
+            RunTest(results, "poor-contact hotspot under breaker rating", TestPoorContact);
+            RunTest(results, "manager preparation, pause, review isolation", TestManagerLifecycle);
+            RunTest(results, "manager incident, isolation, alarm, extinguishing, reset", TestManagerFireWorkflow);
+            RunTest(results, "manager breaker event recorded once", TestManagerBreakerEvent);
+            RunTest(results, "CSV units and invariant numeric output", TestCsvExport);
+
+            string directory = Path.Combine(Application.dataPath, "..", "Logs");
+            Directory.CreateDirectory(directory);
+            string path = Path.GetFullPath(Path.Combine(directory, "JouleModelTests.json"));
+            var json = new StringBuilder();
+            json.AppendLine("{");
+            json.AppendLine("  \"utc\": \"" + DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture) + "\",");
+            json.AppendLine("  \"passed\": " + results.FindAll(r => r.Passed).Count + ",");
+            json.AppendLine("  \"failed\": " + results.FindAll(r => !r.Passed).Count + ",");
+            json.AppendLine("  \"tests\": [");
+            for (int i = 0; i < results.Count; i++)
+            {
+                TestResult result = results[i];
+                json.Append("    { \"name\": \"").Append(Escape(result.Name)).Append("\", \"passed\": ").Append(result.Passed ? "true" : "false").Append(", \"detail\": \"").Append(Escape(result.Detail)).Append("\" }");
+                json.AppendLine(i == results.Count - 1 ? string.Empty : ",");
+            }
+
+            json.AppendLine("  ]");
+            json.AppendLine("}");
+            File.WriteAllText(path, json.ToString(), Encoding.UTF8);
+
+            int failed = results.FindAll(r => !r.Passed).Count;
+            Debug.Log(string.Format(CultureInfo.InvariantCulture, "Joule model tests: {0} passed, {1} failed. Evidence: {2}", results.Count - failed, failed, path));
+            if (failed > 0)
+            {
+                throw new InvalidOperationException("One or more Joule model tests failed. See " + path);
+            }
+        }
+
+        private static void RunTest(List<TestResult> results, string name, Action test)
+        {
+            try
+            {
+                test();
+                results.Add(new TestResult(name, true, "ok"));
+            }
+            catch (Exception exception)
+            {
+                results.Add(new TestResult(name, false, exception.Message));
+                Debug.LogError(name + ": " + exception.Message);
+            }
+        }
+
+        private static void TestI2ProportionalHeating()
+        {
+            var low = new JouleModel();
+            var high = new JouleModel();
+            low.Reset(new JouleParameters { Voltage = 12f, ProtectionEnabled = false });
+            high.Reset(new JouleParameters { Voltage = 24f, ProtectionEnabled = false });
+            low.InjectFault(FaultMode.ShortCircuit);
+            high.InjectFault(FaultMode.ShortCircuit);
+            low.SetPower(true);
+            high.SetPower(true);
+            low.Step(0.1f);
+            high.Step(0.1f);
+            float currentRatio = high.Sample.Current / Math.Max(0.001f, low.Sample.Current);
+            float powerRatio = high.Sample.HeatingPower / Math.Max(0.001f, low.Sample.HeatingPower);
+            Require(currentRatio > 1.9f && currentRatio < 2.1f, "current ratio should be approximately 2 (actual " + currentRatio.ToString("F2", CultureInfo.InvariantCulture) + ")");
+            Require(powerRatio > 3.6f && powerRatio < 4.4f, "heating ratio should be approximately 4 (actual " + powerRatio.ToString("F2", CultureInfo.InvariantCulture) + ")");
+        }
+
+        private static void TestEnergyAndCooling()
+        {
+            var model = new JouleModel();
+            model.InjectFault(FaultMode.ShortCircuit);
+            model.SetPower(true);
+            float expectedElectricalEnergy = 0f;
+            float lostHeat = 0f;
+            for (int i = 0; i < 100; i++)
+            {
+                expectedElectricalEnergy += model.Sample.HeatingPower * 0.02f;
+                lostHeat += model.HeatLossCoefficient * (model.Sample.Temperature - JouleModel.AmbientTemperature) * 0.02f;
+                model.Step(0.02f);
+            }
+
+            float hotTemperature = model.Sample.Temperature;
+            float hotEnergy = model.Sample.HeatEnergy;
+            float retainedHeat = (hotTemperature - JouleModel.AmbientTemperature) * model.ThermalCapacity;
+            Require(Math.Abs(hotEnergy - expectedElectricalEnergy) < 0.5f, "Q must equal integrated electrical I squared R dt");
+            Require(Math.Abs(retainedHeat + lostHeat - hotEnergy) < 0.5f, "electrical input must balance temperature rise and cooling before ignition");
+            model.SetPower(false);
+            model.Step(5f);
+            Require(hotTemperature > JouleModel.AmbientTemperature, "short circuit should heat the specimen");
+            Require(model.Sample.Temperature < hotTemperature, "temperature should fall when power is isolated");
+            Require(Math.Abs(model.Sample.HeatEnergy - hotEnergy) < 0.001f, "cumulative electrical Q must remain constant after isolation");
+            Require(model.Sample.Current == 0f && model.Sample.HeatingPower == 0f, "isolation immediately zeros current and electric heating");
+        }
+
+        private static void TestBreakerAndUnprotected()
+        {
+            var protectedModel = new JouleModel();
+            protectedModel.Reset(new JouleParameters { ProtectionEnabled = true });
+            protectedModel.InjectFault(FaultMode.ShortCircuit);
+            protectedModel.SetPower(true);
+            protectedModel.Step(0.5f);
+
+            var unprotectedModel = new JouleModel();
+            unprotectedModel.InjectFault(FaultMode.ShortCircuit);
+            unprotectedModel.SetPower(true);
+            unprotectedModel.Step(0.5f);
+            Require(protectedModel.Sample.BreakerTripped, "protected short circuit should trip");
+            Require(!protectedModel.Sample.Powered, "tripped model must be unpowered");
+            Require(!unprotectedModel.Sample.BreakerTripped && unprotectedModel.Sample.Powered, "unprotected model should continue powering the fault");
+            Require(protectedModel.Sample.Temperature < 40f, "protection must interrupt before damaging temperature");
+            protectedModel.SetPower(true);
+            Require(!protectedModel.Sample.Powered, "tripped breaker cannot be re-energized without reset");
+            protectedModel.Step(20f);
+            unprotectedModel.Step(20f);
+            Require(protectedModel.Sample.Stage == MaterialStage.Normal && unprotectedModel.Burning, "protected and unprotected trajectories must diverge before fire");
+        }
+
+        private static void TestStagesAndReset()
+        {
+            var model = new JouleModel();
+            model.InjectFault(FaultMode.ShortCircuit);
+            model.SetPower(true);
+            var stages = new HashSet<MaterialStage> { model.Sample.Stage };
+            for (int i = 0; i < 1250 && !model.Burning; i++)
+            {
+                model.Step(0.02f);
+                stages.Add(model.Sample.Stage);
+            }
+
+            Require(model.Burning && model.Sample.Time >= 10f && model.Sample.Time <= 25f, "default short should ignite in 10-25 simulation seconds");
+            Require(stages.Contains(MaterialStage.Warming) && stages.Contains(MaterialStage.Softened) && stages.Contains(MaterialStage.Pyrolysis), "must traverse all visual precursor stages");
+            model.SetPower(false);
+            model.Step(0.5f);
+            Require(model.Burning && !model.Sample.Powered, "chemical burning can continue after electrical isolation");
+            model.Extinguish();
+            model.Step(1f);
+            Require(!model.Burning && model.Sample.Stage == MaterialStage.Charred, "extinguishing leaves irreversible charred damage without re-ignition");
+            model.Reset(model.Parameters);
+            Require(model.Sample.Stage == MaterialStage.Normal && model.Sample.Time < 0.0001f && !model.Burning, "reset should clear thermal and visual state");
+            Require(model.Sample.Fault == FaultMode.None && !model.Sample.BreakerTripped && !model.Sample.Powered && model.Sample.HeatEnergy == 0f, "reset clears faults, breaker, power and integrated Q");
+        }
+
+        private static void TestWireAreaTrend()
+        {
+            var thin = new JouleModel();
+            thin.Reset(new JouleParameters { WireArea = 0.6f });
+            thin.InjectFault(FaultMode.ShortCircuit);
+            thin.SetPower(true);
+            thin.Step(2f);
+
+            var thick = new JouleModel();
+            thick.Reset(new JouleParameters { WireArea = 3f });
+            thick.InjectFault(FaultMode.ShortCircuit);
+            thick.SetPower(true);
+            thick.Step(2f);
+            Require(thin.Sample.Temperature > thick.Sample.Temperature, "smaller cross-section should heat more quickly");
+        }
+
+        private static void Require(bool condition, string detail)
+        {
+            if (!condition)
+            {
+                throw new InvalidOperationException(detail);
+            }
+        }
+
+        private static void TestNormalCircuit()
+        {
+            var model = new JouleModel();
+            model.SetPower(true);
+            float initialResistance = model.WireResistance;
+            Require(Math.Abs(model.Sample.Current - 24f / model.TotalResistance) < 0.0001f, "current must use total finite series resistance");
+            model.Step(60f);
+            Require(model.Sample.Temperature < 30f && model.Sample.Stage == MaterialStage.Normal, "normal default load must remain benign");
+            Require(model.WireResistance > initialResistance, "copper resistance rises with temperature");
+            model.Reset(new JouleParameters { WireArea = float.NaN, LoadResistance = -1f, ContactResistance = float.PositiveInfinity });
+            model.InjectFault(FaultMode.ShortCircuit);
+            model.SetPower(true);
+            Require(!float.IsNaN(model.Sample.Current) && !float.IsInfinity(model.Sample.Current), "invalid parameters must not produce non-finite current");
+        }
+
+        private static void TestDeterminism()
+        {
+            var first = new JouleModel();
+            var second = new JouleModel();
+            first.SetPower(true);
+            second.SetPower(true);
+            for (int i = 0; i < 1200; i++)
+            {
+                if (i == 50) { first.InjectFault(FaultMode.ShortCircuit); second.InjectFault(FaultMode.ShortCircuit); }
+                if (i == 1000) { first.SetPower(false); second.SetPower(false); }
+                first.Step(0.02f);
+                second.Step(0.02f);
+                Require(first.Sample.Time == second.Sample.Time && first.Sample.Temperature == second.Sample.Temperature
+                    && first.Sample.HeatEnergy == second.Sample.HeatEnergy && first.Sample.Stage == second.Sample.Stage,
+                    "same fixed-step commands must yield identical samples");
+            }
+        }
+
+        private static void TestPoorContact()
+        {
+            var model = new JouleModel();
+            model.Reset(new JouleParameters { ProtectionEnabled = true });
+            model.InjectFault(FaultMode.PoorContact);
+            model.SetPower(true);
+            for (int i = 0; i < 1500 && !model.Burning; i++) model.Step(0.02f);
+            Require(model.Burning, "small poor-contact specimen should demonstrate hotspot ignition");
+            Require(model.Sample.Current < JouleModel.BreakerTripCurrent && !model.Sample.BreakerTripped,
+                "ordinary overcurrent protection cannot promise to detect below-rating contact overheating");
+        }
+
+        private static void TestManagerLifecycle()
+        {
+            WithManager(manager =>
+            {
+                manager.TogglePower();
+                Require(!manager.PowerOn, "power requires inspection");
+                manager.SetWireArea(2.5f);
+                manager.SetLoadResistance(6f);
+                manager.Inspect();
+                manager.TogglePower();
+                Require(manager.PowerOn && manager.Phase == ExperimentPhase.Running, "inspection permits normal operation");
+                var expected = new JouleModel();
+                expected.Reset(manager.Parameters);
+                expected.SetPower(true);
+                Require(Math.Abs(manager.Sample.Current - expected.Sample.Current) < 0.0001f, "selected parameters must be applied to the model before power");
+                Advance(manager, 10);
+                float time = manager.Sample.Time;
+                manager.SimulationSpeed = 0f;
+                Advance(manager, 10);
+                Require(manager.Sample.Time == time, "speed zero must pause simulation");
+                manager.SimulationSpeed = 1f;
+                manager.BeginReview();
+                Require(!manager.IsReviewing, "review cannot start while powered");
+                manager.IsolatePower();
+                float isolatedTemperature = manager.Sample.Temperature;
+                Advance(manager, 10);
+                Require(manager.Sample.Temperature < isolatedTemperature, "manager must continue cooling after isolation");
+                manager.BeginReview();
+                Require(manager.IsReviewing, "safe stopped normal run permits review");
+                int samples = manager.History.Count;
+                JouleSample live = manager.Sample;
+                manager.TogglePower();
+                manager.TriggerFault(FaultMode.ShortCircuit);
+                manager.IsolatePower();
+                manager.RaiseAlarm();
+                manager.Extinguish();
+                manager.Inspect();
+                manager.SetWireArea(0.5f);
+                manager.SetProtection(true);
+                Advance(manager, 5);
+                Require(manager.IsReviewing && !manager.PowerOn && manager.Sample.Time == live.Time
+                    && manager.Sample.Fault == live.Fault && manager.Parameters.WireArea == 2.5f
+                    && !manager.Parameters.ProtectionEnabled && manager.History.Count == samples,
+                    "review must not mutate the live model, setup, or record buffer");
+                manager.SetReplayNormalized(1f);
+                Require(manager.DisplaySample.Time == manager.History[manager.History.Count - 1].Time, "timeline must reach final recorded sample");
+                manager.EndReview();
+                Require(!manager.IsReviewing && manager.Phase == ExperimentPhase.Completed, "ending review restores completed phase");
+            });
+        }
+
+        private static void TestManagerFireWorkflow()
+        {
+            WithManager(manager =>
+            {
+                manager.Inspect();
+                manager.TogglePower();
+                manager.TriggerFault(FaultMode.ShortCircuit);
+                Advance(manager, 900);
+                Require(manager.Sample.Stage == MaterialStage.Burning && manager.Phase == ExperimentPhase.Incident, "incident phase must keep advancing to visible fire");
+                manager.SetWireArea(3f);
+                Require(manager.Parameters.WireArea == 1.5f, "setup locks during a run");
+                manager.RaiseAlarm();
+                manager.Extinguish();
+                Require(!manager.AlarmRaised && manager.Sample.Stage == MaterialStage.Burning, "unsafe extinguishing/alarm order rejected before isolation");
+                manager.IsolatePower();
+                Advance(manager, 10);
+                Require(!manager.PowerOn && manager.Sample.Current == 0f && manager.Sample.Stage == MaterialStage.Burning, "isolated burning remains visible until treated");
+                manager.Extinguish();
+                Require(manager.Sample.Stage == MaterialStage.Burning, "alarm required before extinguisher");
+                manager.RaiseAlarm();
+                manager.Extinguish();
+                Require(manager.AlarmRaised && manager.Phase == ExperimentPhase.Completed && manager.Sample.Stage == MaterialStage.Charred, "correct safety sequence completes experiment");
+                int count = manager.History.Count;
+                manager.SimulationSpeed = 3f;
+                manager.ResetExperiment();
+                Require(manager.PreviousHistory.Count == count && manager.History.Count == 0, "reset retains previous trace and clears current trace");
+                Require(manager.SimulationSpeed == 1f && !manager.PowerOn && !manager.AlarmRaised
+                    && !manager.IsInspected && manager.Sample.Stage == MaterialStage.Normal
+                    && manager.Sample.Fault == FaultMode.None && manager.Phase == ExperimentPhase.Inspection, "full reset clears visible and procedural state");
+                manager.ResetExperiment();
+                Require(manager.PreviousHistory.Count == count, "an empty reset must not erase the last comparison run");
+            });
+        }
+
+        private static void TestManagerBreakerEvent()
+        {
+            WithManager(manager =>
+            {
+                manager.SetProtection(true);
+                manager.Inspect();
+                manager.TogglePower();
+                manager.TriggerFault(FaultMode.ShortCircuit);
+                Advance(manager, 100);
+                int trips = 0;
+                foreach (string entry in manager.Events) if (entry.Contains("过流保护跳闸")) trips++;
+                Require(manager.Sample.BreakerTripped && !manager.PowerOn && trips == 1, "breaker transition must be recorded once while cooling continues");
+            });
+        }
+
+        private static void TestCsvExport()
+        {
+            WithManager(manager =>
+            {
+                manager.Inspect();
+                manager.TogglePower();
+                Advance(manager, 20);
+                manager.IsolatePower();
+                CultureInfo originalCulture = CultureInfo.CurrentCulture;
+                string path = string.Empty;
+                try
+                {
+                    CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("fr-FR");
+                    path = manager.ExportCsv();
+                    Require(!string.IsNullOrEmpty(path) && File.Exists(path), "export must create a results CSV");
+                    Require(Path.GetFullPath(Path.GetDirectoryName(path)) == Path.GetFullPath(Path.Combine(Application.persistentDataPath, "Results")), "export uses persistent results directory");
+                    string[] lines = File.ReadAllLines(path);
+                    Require(lines.Length == manager.History.Count + 1 && lines[0].Contains("ElectricalHeat_J"), "CSV includes units and all current samples");
+                    string[] row = lines[1].Split(',');
+                    Require(row.Length == 15 && float.TryParse(row[0], NumberStyles.Float, CultureInfo.InvariantCulture, out _), "CSV must remain parseable independent of locale");
+                }
+                finally
+                {
+                    CultureInfo.CurrentCulture = originalCulture;
+                    if (!string.IsNullOrEmpty(path) && File.Exists(path)) File.Delete(path);
+                }
+            });
+        }
+
+        private static void WithManager(Action<JouleExperimentManager> test)
+        {
+            var container = new GameObject("JouleTestFixture") { hideFlags = HideFlags.HideAndDontSave };
+            try
+            {
+                JouleExperimentManager manager = container.AddComponent<JouleExperimentManager>();
+                manager.ResetExperiment();
+                test(manager);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(container);
+            }
+        }
+
+        private static void Advance(JouleExperimentManager manager, int steps)
+        {
+            MethodInfo frame = typeof(JouleExperimentManager).GetMethod("AdvanceFrame", BindingFlags.NonPublic | BindingFlags.Instance);
+            Require(frame != null, "manager fixed-step frame entry point must exist");
+            for (int i = 0; i < steps; i++) frame.Invoke(manager, new object[] { 0.02f });
+        }
+
+        private static string Escape(string value)
+        {
+            return (value ?? string.Empty).Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\r", "\\r").Replace("\n", "\\n");
+        }
+
+        private readonly struct TestResult
+        {
+            public readonly string Name;
+            public readonly bool Passed;
+            public readonly string Detail;
+
+            public TestResult(string name, bool passed, string detail)
+            {
+                Name = name;
+                Passed = passed;
+                Detail = detail;
+            }
+        }
+    }
+}
