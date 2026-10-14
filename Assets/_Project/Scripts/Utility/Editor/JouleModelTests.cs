@@ -29,6 +29,10 @@ namespace MRLab.Joule.Editor
             RunTest(results, "poor-contact hotspot under breaker rating", TestPoorContact);
             RunTest(results, "manager preparation, pause, review isolation", TestManagerLifecycle);
             RunTest(results, "manager incident, isolation, alarm, extinguishing, reset", TestManagerFireWorkflow);
+            RunTest(results, "continuous fault location, lock, replay and previous run", TestFaultLocation);
+            RunTest(results, "reset cancels active spray and partial extinguishing", TestSprayReset);
+            RunTest(results, "continuous wire geometry and rejection of empty space", TestWireGeometry);
+            RunTest(results, "input-neutral tool movement, aim, release and reset", TestToolInteraction);
             RunTest(results, "manager breaker event recorded once", TestManagerBreakerEvent);
             RunTest(results, "CSV units and invariant numeric output", TestCsvExport);
 
@@ -272,13 +276,15 @@ namespace MRLab.Joule.Editor
                 manager.IsolatePower();
                 manager.RaiseAlarm();
                 manager.Extinguish();
+                manager.SetSprayInput(true, true);
                 manager.Inspect();
                 manager.SetWireArea(0.5f);
                 manager.SetProtection(true);
                 Advance(manager, 5);
                 Require(manager.IsReviewing && !manager.PowerOn && manager.Sample.Time == live.Time
                     && manager.Sample.Fault == live.Fault && manager.Parameters.WireArea == 2.5f
-                    && !manager.Parameters.ProtectionEnabled && manager.History.Count == samples,
+                    && !manager.Parameters.ProtectionEnabled && manager.History.Count == samples
+                    && !manager.SprayActive && manager.ExtinguishProgress == 0f,
                     "review must not mutate the live model, setup, or record buffer");
                 manager.SetReplayNormalized(1f);
                 Require(manager.DisplaySample.Time == manager.History[manager.History.Count - 1].Time, "timeline must reach final recorded sample");
@@ -300,24 +306,127 @@ namespace MRLab.Joule.Editor
                 Require(manager.Parameters.WireArea == 1.5f, "setup locks during a run");
                 manager.RaiseAlarm();
                 manager.Extinguish();
-                Require(!manager.AlarmRaised && manager.Sample.Stage == MaterialStage.Burning, "unsafe extinguishing/alarm order rejected before isolation");
+                manager.SetSprayInput(true, true);
+                Advance(manager, 10);
+                Require(!manager.AlarmRaised && manager.Sample.Stage == MaterialStage.Burning
+                    && !manager.SprayActive && manager.ExtinguishProgress == 0f,
+                    "unsafe extinguishing/alarm order rejected before isolation");
                 manager.IsolatePower();
                 Advance(manager, 10);
                 Require(!manager.PowerOn && manager.Sample.Current == 0f && manager.Sample.Stage == MaterialStage.Burning, "isolated burning remains visible until treated");
                 manager.Extinguish();
-                Require(manager.Sample.Stage == MaterialStage.Burning, "alarm required before extinguisher");
+                manager.SetSprayInput(true, true);
+                Advance(manager, 10);
+                Require(manager.Sample.Stage == MaterialStage.Burning && manager.ExtinguishProgress == 0f
+                    && !manager.SprayActive, "alarm required before extinguisher");
                 manager.RaiseAlarm();
                 manager.Extinguish();
+                Require(manager.Sample.Stage == MaterialStage.Burning && manager.ExtinguishProgress == 0f,
+                    "single-click legacy command must not bypass physical spray interaction");
+                manager.SetSprayInput(true, false);
+                Advance(manager, 20);
+                Require(manager.SprayActive && !manager.SprayOnTarget && manager.ExtinguishProgress == 0f,
+                    "holding trigger away from fire produces no suppression progress");
+                manager.SetSprayInput(true, true);
+                Advance(manager, 25);
+                float progress = manager.ExtinguishProgress;
+                Require(progress > 0.1f && progress < 0.3f && manager.Sample.Stage == MaterialStage.Burning,
+                    "a brief aimed spray only partially suppresses the fire");
+                manager.SetSprayInput(false, true);
+                Advance(manager, 20);
+                Require(!manager.SprayActive && manager.ExtinguishProgress == progress,
+                    "release immediately stops spray without advancing accumulated progress");
+                manager.SetSprayInput(true, false);
+                Advance(manager, 20);
+                Require(manager.ExtinguishProgress == progress, "moving off target pauses accumulated suppression");
+                manager.SetSprayInput(true, true);
+                manager.SimulationSpeed = 0f;
+                Advance(manager, 50);
+                Require(manager.ExtinguishProgress == progress && manager.Sample.Stage == MaterialStage.Burning,
+                    "paused simulation must not accumulate suppression");
+                manager.SimulationSpeed = 1f;
+                manager.SetSprayInput(true, true);
+                Advance(manager, 100);
+                Require(manager.Sample.Stage == MaterialStage.Burning && manager.ExtinguishProgress < 1f,
+                    "less than three cumulative on-target seconds must not complete extinguishing");
+                Advance(manager, 30);
                 Require(manager.AlarmRaised && manager.Phase == ExperimentPhase.Completed && manager.Sample.Stage == MaterialStage.Charred, "correct safety sequence completes experiment");
+                Require(manager.ExtinguishProgress == 1f && !manager.SprayActive,
+                    "completed extinguishing reports full progress and stops emission");
                 int count = manager.History.Count;
+                int resetVersion = manager.ResetVersion;
                 manager.SimulationSpeed = 3f;
                 manager.ResetExperiment();
                 Require(manager.PreviousHistory.Count == count && manager.History.Count == 0, "reset retains previous trace and clears current trace");
                 Require(manager.SimulationSpeed == 1f && !manager.PowerOn && !manager.AlarmRaised
                     && !manager.IsInspected && manager.Sample.Stage == MaterialStage.Normal
-                    && manager.Sample.Fault == FaultMode.None && manager.Phase == ExperimentPhase.Inspection, "full reset clears visible and procedural state");
+                    && manager.Sample.Fault == FaultMode.None && manager.Phase == ExperimentPhase.Inspection
+                    && manager.ResetVersion > resetVersion && !manager.SprayActive && manager.ExtinguishProgress == 0f,
+                    "full reset clears visible and procedural state and signals interaction adapters");
                 manager.ResetExperiment();
                 Require(manager.PreviousHistory.Count == count, "an empty reset must not erase the last comparison run");
+            });
+        }
+
+        private static void TestFaultLocation()
+        {
+            WithManager(manager =>
+            {
+                Require(manager.CanSelectFaultLocation, "fault placement is available before power");
+                Require(manager.SetFaultLocation(3, 0.371f), "arbitrary point on return wire must be selectable");
+                Require(manager.Parameters.FaultWire == 3 && Math.Abs(manager.Parameters.FaultPosition - 0.371f) < 0.0001f,
+                    "selection must preserve continuous position instead of snapping to presets");
+                Require(!manager.SetFaultLocation(-1, 0.5f) && !manager.SetFaultLocation(4, 0.5f)
+                    && !manager.SetFaultLocation(1, -0.01f) && !manager.SetFaultLocation(1, 1.01f)
+                    && !manager.SetFaultLocation(1, float.NaN) && !manager.SetFaultLocation(1, float.PositiveInfinity),
+                    "invalid wires and non-finite/out-of-range positions must be rejected");
+                Require(manager.Parameters.FaultWire == 3 && Math.Abs(manager.Parameters.FaultPosition - 0.371f) < 0.0001f,
+                    "invalid placement must preserve the last valid selection");
+                manager.Inspect();
+                manager.TogglePower();
+                Require(!manager.CanSelectFaultLocation && !manager.SetFaultLocation(0, 0.1f),
+                    "a running experiment must retain the prepared fault location");
+                manager.TriggerFault(FaultMode.ShortCircuit);
+                Advance(manager, 25);
+                manager.IsolatePower();
+                manager.RaiseAlarm();
+                manager.BeginReview();
+                Require(manager.IsReviewing && !manager.SetFaultLocation(2, 0.8f), "review cannot edit fault placement");
+                manager.SetReplayNormalized(0f);
+                Require(manager.DisplaySample.FaultWire == 3 && Math.Abs(manager.DisplaySample.FaultPosition - 0.371f) < 0.0001f,
+                    "first replay sample stores the selected wire and exact relative position");
+                manager.SetReplayNormalized(1f);
+                Require(manager.DisplaySample.FaultWire == 3 && Math.Abs(manager.DisplaySample.FaultPosition - 0.371f) < 0.0001f,
+                    "final replay sample retains fault placement");
+                manager.ResetExperiment();
+                Require(manager.SetFaultLocation(0, 0.817f), "reset permits a different location for the next run");
+                Require(manager.PreviousHistory.Count > 0, "previous trace survives reset");
+                foreach (JouleSample sample in manager.PreviousHistory)
+                {
+                    Require(sample.FaultWire == 3 && Math.Abs(sample.FaultPosition - 0.371f) < 0.0001f,
+                        "changing next-run setup must not move the previous run's recorded hotspot");
+                }
+            });
+        }
+
+        private static void TestSprayReset()
+        {
+            WithManager(manager =>
+            {
+                manager.Inspect();
+                manager.TogglePower();
+                manager.TriggerFault(FaultMode.ShortCircuit);
+                Advance(manager, 900);
+                manager.IsolatePower();
+                manager.RaiseAlarm();
+                manager.SetSprayInput(true, true);
+                Advance(manager, 25);
+                Require(manager.SprayActive && manager.ExtinguishProgress > 0f, "fixture has active partial suppression");
+                manager.ResetExperiment();
+                Advance(manager, 200);
+                Require(!manager.SprayActive && !manager.SprayOnTarget && manager.ExtinguishProgress == 0f
+                    && manager.Sample.Time == 0f && manager.Sample.Stage == MaterialStage.Normal,
+                    "reset must cancel a held trigger and discard its suppression progress");
             });
         }
 
@@ -336,10 +445,118 @@ namespace MRLab.Joule.Editor
             });
         }
 
+        private static void TestWireGeometry()
+        {
+            for (int wire = 0; wire < WirePathGeometry.WireCount; wire++)
+            {
+                Vector3[] vertices = WirePathGeometry.Points(wire);
+                Require(Vector3.Distance(WirePathGeometry.Point(wire, 0f), vertices[0]) < 0.00001f
+                    && Vector3.Distance(WirePathGeometry.Point(wire, 1f), vertices[vertices.Length - 1]) < 0.00001f,
+                    "continuous selection includes both ends of every selectable wire");
+                foreach (float position in new[] { .173f, .371f, .817f })
+                {
+                    Vector3 point = WirePathGeometry.Point(wire, position);
+                    Require(WirePathGeometry.ClosestPoint(point, out int foundWire, out float foundPosition, out Vector3 snapped, .001f)
+                        && foundWire == wire && Math.Abs(foundPosition - position) < .0001f
+                        && Vector3.Distance(point, snapped) < .0001f,
+                        "world-independent path queries preserve arbitrary continuous positions on each wire");
+                }
+            }
+            Require(!WirePathGeometry.ClosestPoint(new Vector3(3f, 1f, 3f), out _, out _, out _, .12f)
+                && !WirePathGeometry.ClosestPoint(new Vector3(float.NaN, 1f, 0f), out _, out _, out _, .12f),
+                "empty space and invalid tracking coordinates must not select an electrical fault");
+        }
+
+        private static void TestToolInteraction()
+        {
+            WithManager(manager =>
+            {
+                var bench = new GameObject("SpatialTestBench");
+                bench.transform.SetParent(manager.transform, false);
+                bench.transform.SetPositionAndRotation(new Vector3(2f, .2f, -1f), Quaternion.Euler(0f, 27f, 0f));
+                var body = new GameObject("SpatialTestExtinguisher");
+                body.transform.SetParent(manager.transform, false);
+                ExtinguisherInteraction interaction = body.AddComponent<ExtinguisherInteraction>();
+                Vector3 home = new Vector3(1f, .6f, -1f);
+                body.transform.localPosition = home;
+                var horn = new GameObject("Horn");
+                horn.transform.SetParent(body.transform, false);
+                horn.transform.localPosition = Vector3.up * .2f;
+                var outlet = new GameObject("Outlet");
+                outlet.transform.SetParent(horn.transform, false);
+                outlet.transform.localPosition = Vector3.forward * .17f;
+                interaction.Configure(manager, bench.transform, horn.transform, outlet.transform, null, null, null, null, null);
+                manager.SetFaultLocation(0, .63f);
+                manager.Inspect();
+                manager.TogglePower();
+                manager.TriggerFault(FaultMode.ShortCircuit);
+                Advance(manager, 900);
+                manager.IsolatePower();
+                manager.RaiseAlarm();
+                Vector3 target = bench.transform.TransformPoint(WirePathGeometry.Point(0, .63f) + Vector3.up * .035f);
+                Vector3 workingPosition = target + new Vector3(0f, .2f, -1.5f);
+                interaction.MoveTo(workingPosition);
+                Require(body.transform.localPosition == home, "unheld tools do not follow move commands");
+                interaction.Grab();
+                interaction.MoveTo(workingPosition);
+                interaction.AimAt(target);
+                Require(interaction.IsHeld && Vector3.Distance(body.transform.position, workingPosition) < .0001f
+                    && interaction.IsOnTarget, "world-space move and aim operate correctly in a relocated, rotated laboratory");
+                interaction.MoveTo(new Vector3(float.NaN, 0f, 0f));
+                Require(Vector3.Distance(body.transform.position, workingPosition) < .0001f,
+                    "invalid tracking positions cannot corrupt the held tool pose");
+                interaction.AimAt(target + Vector3.right * 3f);
+                interaction.SetTrigger(true);
+                Advance(manager, 25);
+                Require(!interaction.IsOnTarget && manager.ExtinguishProgress == 0f,
+                    "a held switch while the nozzle points away must not suppress fire");
+                interaction.MoveTo(target + Vector3.back * 4f);
+                interaction.AimAt(target);
+                interaction.SetTrigger(true);
+                Advance(manager, 25);
+                Require(!interaction.IsOnTarget && manager.ExtinguishProgress == 0f,
+                    "aiming from outside effective range must not suppress fire");
+                interaction.MoveTo(workingPosition);
+                interaction.AimAt(target);
+                interaction.SetTrigger(true);
+                Advance(manager, 25);
+                float partialProgress = manager.ExtinguishProgress;
+                Require(interaction.IsOnTarget && manager.SprayActive && partialProgress > 0f,
+                    "valid pose and held trigger feed effective suppression through the shared interface");
+                interaction.Release();
+                Advance(manager, 25);
+                Require(!interaction.IsHeld && !manager.SprayActive && manager.ExtinguishProgress == partialProgress
+                    && Vector3.Distance(body.transform.position, workingPosition) < .0001f,
+                    "release stops spray while preserving the chosen placement");
+                interaction.ResetPose();
+                Require(body.transform.localPosition == home && !interaction.IsHeld && !manager.SprayActive,
+                    "explicit return restores the saved home pose and stops interaction");
+                interaction.Grab();
+                interaction.MoveTo(workingPosition);
+                interaction.AimAt(target);
+                interaction.SetTrigger(true);
+                manager.ResetExperiment();
+                MethodInfo update = typeof(ExtinguisherInteraction).GetMethod("Update", BindingFlags.NonPublic | BindingFlags.Instance);
+                Require(update != null, "tool update must synchronize with experiment reset");
+                update.Invoke(interaction, null);
+                Require(body.transform.localPosition == home && !interaction.IsHeld && !interaction.IsOnTarget
+                    && !manager.SprayActive && manager.ExtinguishProgress == 0f,
+                    "experiment reset returns a moved tool and clears any held switch state");
+                manager.Inspect();
+                manager.TogglePower();
+                Advance(manager, 10);
+                manager.IsolatePower();
+                manager.BeginReview();
+                interaction.Grab();
+                Require(manager.IsReviewing && !interaction.IsHeld, "review prevents live tool grabs");
+            });
+        }
+
         private static void TestCsvExport()
         {
             WithManager(manager =>
             {
+                manager.SetFaultLocation(2, 0.631f);
                 manager.Inspect();
                 manager.TogglePower();
                 Advance(manager, 20);
@@ -355,7 +572,19 @@ namespace MRLab.Joule.Editor
                     string[] lines = File.ReadAllLines(path);
                     Require(lines.Length == manager.History.Count + 1 && lines[0].Contains("ElectricalHeat_J"), "CSV includes units and all current samples");
                     string[] row = lines[1].Split(',');
-                    Require(row.Length == 15 && float.TryParse(row[0], NumberStyles.Float, CultureInfo.InvariantCulture, out _), "CSV must remain parseable independent of locale");
+                    Require(row.Length == 16 && float.TryParse(row[0], NumberStyles.Float, CultureInfo.InvariantCulture, out _), "CSV must remain parseable independent of locale");
+                    string[] headers = lines[0].Split(',');
+                    int wireColumn = Array.IndexOf(headers, "FaultWire");
+                    int positionColumn = Array.IndexOf(headers, "FaultPosition");
+                    Require(wireColumn >= 0 && positionColumn >= 0, "CSV records the selected wire and normalized position");
+                    for (int i = 1; i < lines.Length; i++)
+                    {
+                        string[] values = lines[i].Split(',');
+                        JouleSample sample = manager.History[i - 1];
+                        Require(int.Parse(values[wireColumn], CultureInfo.InvariantCulture) == sample.FaultWire
+                            && Math.Abs(float.Parse(values[positionColumn], CultureInfo.InvariantCulture) - sample.FaultPosition) < 0.001f,
+                            "every CSV row must retain its corresponding sample's location");
+                    }
                 }
                 finally
                 {

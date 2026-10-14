@@ -21,7 +21,10 @@ namespace MRLab.Joule
         private static readonly Color White=new Color(.91f,.95f,.95f);
         private TMP_Text current,temperature,power,energy,phase,message,stage,events,time,formula;
         private TMP_Text protectionLabel,overlayLabel,reviewLabel,speedLabel,axisI,axisT,axisTimeI,axisTimeT;
-        private TMP_Text gaugeValue,loadValue,contactValue,positionValue;
+        private TMP_Text gaugeValue,loadValue,contactValue,positionValue,interactionHint,sprayStatus;
+        private TMP_Text locationButtonLabel,extinguisherButtonLabel;
+        private JoulePCInput pcInput;
+        private Button sprayButton;
         private Button powerButton,reviewButton,speedButton;
         private readonly List<Button> parameterButtons=new List<Button>();
         private readonly List<Button> liveButtons=new List<Button>();
@@ -41,6 +44,7 @@ namespace MRLab.Joule
         private void Start()
         {
             if(Experiment==null)Experiment=FindObjectOfType<JouleExperimentManager>();
+            pcInput=FindObjectOfType<JoulePCInput>();
             if(Font==null)Font=TMP_Settings.defaultFontAsset;
             CreateUI(); Refresh();
         }
@@ -70,7 +74,7 @@ namespace MRLab.Joule
             Text(root,"E10   /   ELECTRICAL SAFETY LAB",40,20,500,20,13,Muted);
             Text(root,"焦耳定律 · 短路起火",40,45,630,40,30,White);
             Text(root,"实验室 01     /     PC 交互实验",1100,24,460,23,16,Muted,TextAlignmentOptions.Right);
-            Button(root,"操作说明",1372,59,90,29,()=>help.SetActive(!help.activeSelf),Raised,13);
+            Button(root,"操作说明",1372,59,90,29,()=>SetHelpVisible(!help.activeSelf),Raised,13);
             Button(root,"退出",1476,59,84,29,()=>Application.Quit(),Raised,13);
             string[] steps={"01  巡检","02  设参","03  触发","04  处置","05  复盘"};
             for(int i=0;i<5;i++)
@@ -89,8 +93,10 @@ namespace MRLab.Joule
             loadValue=Choice(left,217,()=>StepLoad(-1),()=>StepLoad(1));
             Text(left,"故障点接触电阻",20,268,218,23,15,Muted);
             contactValue=Choice(left,301,()=>StepContact(-1),()=>StepContact(1));
-            Text(left,"故障位置",20,352,216,23,15,Muted);
-            positionValue=Choice(left,385,()=>StepPosition(-1),()=>StepPosition(1));
+            Text(left,"故障位置 · 沿导线自由选择",20,347,216,23,14,Muted);
+            positionValue=Text(left,"",20,373,216,25,14,Teal);
+            var locationButton=Button(left,"在导线上选点 / 拖动",20,405,216,32,()=>pcInput?.ToggleFaultSelection(),Raised,14);
+            parameterButtons.Add(locationButton);locationButtonLabel=locationButton.GetComponentInChildren<TMP_Text>();
             var pb=Button(left,"保护器  关闭",20,450,216,38,()=>{if(CanEditParameters())Experiment.SetProtection(!Experiment.Parameters.ProtectionEnabled);},Raised,16);
             parameterButtons.Add(pb);
             protectionLabel=pb.GetComponentInChildren<TMP_Text>();
@@ -104,6 +110,7 @@ namespace MRLab.Joule
             var viewport=Box(root,"ViewportBadge",305,224,258,34,new Color(.04f,.08f,.11f,.87f)).transform;
             Text(viewport,"LIVE  /  三维实验台",12,5,234,24,14,Teal);
             phase=Text(root,"等待巡检",1100,225,173,28,15,Teal,TextAlignmentOptions.Right);
+            interactionHint=Text(root,"",310,263,960,24,13,White);
             stage=Text(root,"完好",308,577,420,32,24,Teal);
             var overlay=Button(root,"热风险叠加：开  [T]",1082,578,194,32,()=>Experiment.ToggleThermalOverlay(),Raised,13);
             overlayLabel=overlay.GetComponentInChildren<TMP_Text>();
@@ -119,8 +126,12 @@ namespace MRLab.Joule
             LiveButton(right,"接触不良  [G]",18,247,236,32,()=>Experiment.TriggerFault(FaultMode.PoorContact),Raised,14);
             LiveButton(right,"04   紧急断电  [E]",18,306,236,43,()=>Experiment.IsolatePower(),new Color(.60f,.22f,.18f),16);
             LiveButton(right,"报警  [A]",18,361,111,37,()=>Experiment.RaiseAlarm(),Raised,15);
-            LiveButton(right,"灭火  [X]",141,361,113,37,()=>Experiment.Extinguish(),Raised,15);
-            reviewButton=Button(right,"05   实验复盘",18,424,236,40,()=>{if(Experiment.IsReviewing)Experiment.EndReview();else Experiment.BeginReview();},Raised,16);
+            var equip=LiveButton(right,"取用  [X]",141,361,113,37,()=>pcInput?.ToggleExtinguisher(),Raised,15);
+            extinguisherButtonLabel=equip.GetComponentInChildren<TMP_Text>();
+            sprayButton=LiveButton(right,"按住喷射",18,404,111,32,()=>{},new Color(.13f,.35f,.38f),14);
+            sprayButton.gameObject.AddComponent<JouleSprayHoldButton>().Input=pcInput;
+            sprayStatus=Text(right,"未取用",137,401,119,36,12,Teal);
+            reviewButton=Button(right,"05   实验复盘",18,444,236,33,()=>{if(Experiment.IsReviewing)Experiment.EndReview();else Experiment.BeginReview();},Raised,16);
             reviewLabel=reviewButton.GetComponentInChildren<TMP_Text>();
             Button(right,"复位并保留对照  [R]",18,487,236,35,()=>Experiment.ResetExperiment(),new Color(.13f,.22f,.26f),14);
 
@@ -168,8 +179,14 @@ namespace MRLab.Joule
             gaugeValue.text=Experiment.Parameters.WireArea.ToString("0.0")+" mm²";
             loadValue.text=Experiment.Parameters.LoadResistance.ToString("0")+" Ω";
             contactValue.text=Experiment.Parameters.ContactResistance.ToString("0.00")+" Ω";
-            string[] locations={"电源端","接线端子","负载端"};
-            positionValue.text=locations[Mathf.Clamp(Experiment.Parameters.FaultPosition,0,2)];
+            positionValue.text=WirePathGeometry.Name(s.FaultWire)+"  "+(s.FaultPosition*100).ToString("0.0")+"%";
+            locationButtonLabel.text=pcInput!=null&&pcInput.SelectingFault?"正在选点 · 再按退出":"在导线上选点 / 拖动";
+            bool equipped=pcInput!=null&&pcInput.HoldingExtinguisher;
+            extinguisherButtonLabel.text=equipped?"收回  [X]":"取用  [X]";
+            sprayButton.interactable=equipped&&!Experiment.IsReviewing;
+            sprayStatus.text=!equipped?"未取用":Experiment.ExtinguishProgress>=1?"已扑灭":
+                (Experiment.SprayActive?(Experiment.SprayOnTarget?"命中 ":"偏离 "):(pcInput.AimingAtFire?"已对准 ":"偏离 "))+(Experiment.ExtinguishProgress*100).ToString("0")+"%";
+            interactionHint.text=Experiment.IsReviewing?"复盘中 · 场景交互已锁定":pcInput==null?"":pcInput.InteractionHint;
             protectionLabel.text=Experiment.Parameters.ProtectionEnabled?"保护器：启用  10 A":"保护器：关闭";
             protectionLabel.color=Experiment.Parameters.ProtectionEnabled?Teal:Amber;
             overlayLabel.text="热风险叠加："+(Experiment.ThermalOverlay?"开":"关")+"  [T]";
@@ -203,11 +220,16 @@ namespace MRLab.Joule
             var sheet=Box(help.transform,"HelpSheet",380,174,840,556,Surface).transform;
             Text(sheet,"实验说明",32,25,775,42,28,White);
             Text(sheet,"在实验室中观察电流、温升与材料状态之间的关系。",32,79,775,35,18,Teal);
-            Text(sheet,"1. 巡检线路，选择线径、负载、故障位置与保护器。\n2. 合上电源，观察正常回路的电流；再触发短路或接触不良。\n3. 观察温度、焦耳功率、曲线和导线热风险颜色。\n4. 先紧急断电，再报警，最后使用灭火器。\n5. 进入复盘并拖动时间轴；复位后可叠加上一轮曲线比较。",32,136,775,181,18,White);
-            Text(sheet,"右键拖动：环绕视角    滚轮：缩放    Home：恢复视角\nP 通断电  F 短路  G 接触不良  E 断电  A 报警  X 灭火\nT 热风险叠加  R 复位  Space 暂停/继续",32,329,775,88,15,Muted);
+            Text(sheet,"1. 巡检并设参；按「选点」，沿任意实验导线左拖，松手确认。\n2. 合上电源再触发故障。火点锁定，观察温升和材料变化。\n3. 先断电、报警。左拖灭火器瓶身移动；拖动中滚轮调节远近。\n4. 左拖空处瞄准根部，右键按住扫射；也可瞄准后按住喷射开关。\n5. 命中累计 3 秒才扑灭；松手或偏离暂停进度。最后复盘。",32,136,775,181,18,White);
+            Text(sheet,"未取用时右拖环绕、滚轮缩放；Home 恢复视角；Esc 收回\nP 通断电  F 短路  G 接触不良  E 断电  A 报警  X 取用/收回\nT 热风险叠加  R 复位  Space 暂停/继续；暂停时不累计灭火",32,329,775,88,15,Muted);
             Text(sheet,"教学模型：24 V 集总电路与简化散热。温度和着火阈值用于演示趋势，\n不代表真实设备的安全限值。所有故障与火焰均为虚拟仿真。",32,429,775,58,14,Amber);
-            Button(sheet,"返回实验",611,497,194,37,()=>help.SetActive(false),new Color(.10f,.35f,.29f),16);
+            Button(sheet,"返回实验",611,497,194,37,()=>SetHelpVisible(false),new Color(.10f,.35f,.29f),16);
             help.SetActive(false);
+        }
+        private void SetHelpVisible(bool visible)
+        {
+            if(pcInput!=null)pcInput.ModalBlocked=visible;
+            help.SetActive(visible);
         }
         private TMP_Text Choice(Transform parent,float y,Action previous,Action next)
         {
@@ -231,10 +253,6 @@ namespace MRLab.Joule
         private void StepContact(int direction)
         {
             if(CanEditParameters())Experiment.SetContactResistance(NextValue(contacts,Experiment.Parameters.ContactResistance,direction));
-        }
-        private void StepPosition(int direction)
-        {
-            if(CanEditParameters())Experiment.SetFaultPosition((Mathf.Clamp(Experiment.Parameters.FaultPosition,0,2)+direction+3)%3);
         }
         private static float NextValue(float[] choices,float value,int direction)
         {

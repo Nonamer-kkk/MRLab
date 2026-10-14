@@ -34,7 +34,17 @@ namespace MRLab.Joule
         public float LoadResistance = 12f;
         public float ContactResistance = 0.08f;
         public bool ProtectionEnabled;
-        public int FaultPosition = 1;
+        /// <summary>
+        /// Wire that receives the deliberately injected fault.
+        /// 0 = supply positive, 1 = test wire, 2 = load positive, 3 = return.
+        /// </summary>
+        public int FaultWire = 1;
+
+        /// <summary>
+        /// Normalized distance along <see cref="FaultWire"/>. It is kept in the
+        /// simulation data so recorded/replayed hotspots do not depend on live UI state.
+        /// </summary>
+        public float FaultPosition = 0.5f;
 
         public JouleParameters Clone()
         {
@@ -45,6 +55,7 @@ namespace MRLab.Joule
                 LoadResistance = LoadResistance,
                 ContactResistance = ContactResistance,
                 ProtectionEnabled = ProtectionEnabled,
+                FaultWire = FaultWire,
                 FaultPosition = FaultPosition
             };
         }
@@ -55,7 +66,8 @@ namespace MRLab.Joule
             WireArea = ClampFinite(WireArea, 0.1f, 50f, 1.5f);
             LoadResistance = ClampFinite(LoadResistance, 0.05f, 1000f, 12f);
             ContactResistance = ClampFinite(ContactResistance, 0f, 100f, 0.08f);
-            FaultPosition = Math.Max(0, Math.Min(2, FaultPosition));
+            FaultWire = Math.Max(0, Math.Min(3, FaultWire));
+            FaultPosition = ClampFinite(FaultPosition, 0f, 1f, 0.5f);
         }
 
         private static float ClampFinite(float value, float min, float max, float fallback)
@@ -81,6 +93,8 @@ namespace MRLab.Joule
         public bool Powered;
         public bool BreakerTripped;
         public FaultMode Fault;
+        public int FaultWire;
+        public float FaultPosition;
 
         public JouleSample(
             float time,
@@ -91,7 +105,9 @@ namespace MRLab.Joule
             MaterialStage stage,
             bool powered,
             bool breakerTripped,
-            FaultMode fault)
+            FaultMode fault,
+            int faultWire,
+            float faultPosition)
         {
             Time = time;
             Current = current;
@@ -102,6 +118,8 @@ namespace MRLab.Joule
             Powered = powered;
             BreakerTripped = breakerTripped;
             Fault = fault;
+            FaultWire = faultWire;
+            FaultPosition = faultPosition;
         }
     }
 
@@ -286,7 +304,9 @@ namespace MRLab.Joule
                 _stage,
                 _powered && !_breakerTripped,
                 _breakerTripped,
-                _fault);
+                _fault,
+                Parameters.FaultWire,
+                Parameters.FaultPosition);
         }
 
         private float GetWireResistance(float temperature)
@@ -335,7 +355,9 @@ namespace MRLab.Joule
             if (Burning)
             {
                 _burningTime += dt;
-                if (_burningTime >= 30f)
+                // Leave time for learners to grab, reposition and aim a spatial tool.
+                // This finite 180-second training window is not a real material burn-time claim.
+                if (_burningTime >= 180f)
                 {
                     _stage = MaterialStage.Charred;
                     Burning = false;

@@ -70,13 +70,15 @@ namespace MRLab.Joule
             Renderer breakerLed;
             Transform lever;
             BuildBreaker(interactables, out breakerLed, out lever);
-            BuildActions(interactables);
+            BuildActions(interactables, rig);
 
-            Cable("SupplyPositive", rig, new[] { new Vector3(-.94f, .943f, -.093f), new Vector3(-.68f, .91f, -.19f), new Vector3(-.56f, .92f, -.22f), new Vector3(-.38f, .93f, -.16f), new Vector3(-.22f, .934f, -.13f) }, .014f, red);
-            Cable("LoadPositive", rig, new[] { new Vector3(.24f, .934f, -.13f), new Vector3(.4f, .934f, -.16f), new Vector3(.51f, .93f, -.08f), new Vector3(.67f, .94f, -.063f) }, .014f, red);
-            Cable("ReturnConductor", rig, new[] { new Vector3(1.03f, .94f, -.063f), new Vector3(.87f, .916f, -.19f), new Vector3(.76f, .916f, -.28f), new Vector3(.35f, .916f, -.3f), new Vector3(-.08f, .916f, -.29f), new Vector3(-.55f, .91f, -.33f), new Vector3(-1.01f, .943f, -.093f) }, .014f, black);
+            var allConductors = new List<Renderer>();
+            allConductors.AddRange(Cable("SupplyPositive", rig, WirePathGeometry.Points(0), .014f, red));
+            allConductors.AddRange(Cable("LoadPositive", rig, WirePathGeometry.Points(2), .014f, red));
+            allConductors.AddRange(Cable("ReturnConductor", rig, WirePathGeometry.Points(3), .014f, black));
             Transform wireHolder = Group("TestWireHolder", rig);
-            var testWire = Cable("HeatingWire", wireHolder, new[] { new Vector3(-.22f, .94f, -.13f), new Vector3(-.12f, .957f, -.1f), new Vector3(.03f, .96f, -.1f), new Vector3(.15f, .951f, -.12f), new Vector3(.24f, .94f, -.13f) }, .018f, Surface("Lab_HotWire_MAT", new Color(.24f, .12f, .09f), .25f, .35f, new Color(.01f, 0f, 0f)));
+            var testWire = Cable("HeatingWire", wireHolder, WirePathGeometry.Points(1), .018f, Surface("Lab_HotWire_MAT", new Color(.24f, .12f, .09f), .25f, .35f, new Color(.01f, 0f, 0f)));
+            allConductors.AddRange(testWire);
             foreach (float x in new[] { -.22f, .24f })
             {
                 Cube("CeramicTerminal", rig, new Vector3(x, .913f, -.13f), new Vector3(.071f, .032f, .085f), white);
@@ -85,8 +87,17 @@ namespace MRLab.Joule
             }
             var hotSpot = Sphere("WireHotspot", rig, new Vector3(.03f, .96f, -.1f), new Vector3(.05f, .032f, .038f), testWire[0].sharedMaterial);
             Transform jumper = Group("ShortCircuitJumper", rig);
-            Cable("FaultJumper", jumper, new[] { new Vector3(.22f, .94f, -.14f), new Vector3(.3f, .97f, -.19f), new Vector3(.33f, .94f, -.3f) }, .011f, brass);
+            Cable("FaultJumper", jumper, new[] { Vector3.zero, new Vector3(.08f, .045f, -.025f), new Vector3(.11f, .0f, -.055f) }, .011f, brass);
             jumper.gameObject.SetActive(false);
+            Transform selected = Group("SelectedFaultLocation", rig);
+            Material markerMaterial = Surface("Lab_FaultMarker_MAT", new Color(1f, .65f, .05f), .1f, .4f, new Color(.7f, .32f, .015f));
+            for (int i = 0; i < 4; i++)
+            {
+                float angle = i * Mathf.PI * .5f;
+                Vector3 markerPosition = new Vector3(Mathf.Cos(angle) * .055f, .018f, Mathf.Sin(angle) * .055f);
+                Cube("SelectionBracket_" + i, selected, markerPosition,
+                    i % 2 == 0 ? new Vector3(.007f, .007f, .045f) : new Vector3(.045f, .007f, .007f), markerMaterial);
+            }
 
             Transform sensor = Group("TemperatureSensor", rig);
             Cube("SensorBase", sensor, new Vector3(.21f, .925f, .145f), new Vector3(.30f, .065f, .11f), slate);
@@ -117,8 +128,8 @@ namespace MRLab.Joule
             glow.color = new Color(1f, .24f, .025f);
             glow.enabled = false;
 
-            controller.Configure(focus, testWire, powerLed, breakerLed, hotSpot, jumper.gameObject,
-                lever, readout, temperature, smoke, flame, sparks, glow, thermal.gameObject);
+            controller.Configure(focus, allConductors.ToArray(), powerLed, breakerLed, hotSpot, jumper.gameObject,
+                lever, readout, temperature, smoke, flame, sparks, glow, thermal.gameObject, selected);
 #if UNITY_EDITOR
             if (!Application.isPlaying)
                 AssetDatabase.SaveAssets();
@@ -252,7 +263,7 @@ namespace MRLab.Joule
             Action(breaker, LabAction.Isolate, "断开总电源", new Vector3(-.49f, .96f, -.37f), new Vector3(.26f, .24f, .24f));
         }
 
-        private static void BuildActions(Transform parent)
+        private static void BuildActions(Transform parent, Transform circuitFrame)
         {
             Transform alarm = Group("AlarmButton", parent);
             Cube("AlarmHousing", alarm, new Vector3(1.32f, 1.0f, .28f), new Vector3(.20f, .30f, .13f), red);
@@ -261,20 +272,69 @@ namespace MRLab.Joule
             Label("AlarmLabel", alarm, "报警", new Vector3(1.32f, .938f, .206f), new Vector2(.14f, .07f), .50f, Color.white);
             Action(alarm, LabAction.Alarm, "触发实验室火警", new Vector3(1.32f, 1f, .28f), new Vector3(.24f, .33f, .18f));
 
+            Transform stand = Group("ExtinguisherStand", parent);
+            Cube("ExtinguisherFloorMark", stand, new Vector3(1.81f, .007f, -.14f), new Vector3(.50f, .007f, .50f), teal);
+            Label("FirePointLabel", stand, "FIRE POINT", new Vector3(1.81f, .013f, -.47f), new Vector2(.54f, .15f), .7f, new Color(.78f, .87f, .84f), new Vector3(90, 0, 0));
             Transform extinguisher = Group("CO2Extinguisher", parent);
-            Cylinder("CylinderBody", extinguisher, new Vector3(1.81f, .43f, -.14f), .22f, .57f, red);
-            Sphere("CylinderShoulder", extinguisher, new Vector3(1.81f, .713f, -.14f), new Vector3(.22f, .12f, .22f), red);
-            Cylinder("Valve", extinguisher, new Vector3(1.81f, .80f, -.14f), .051f, .10f, brass);
-            Cube("CarryHandle", extinguisher, new Vector3(1.84f, .855f, -.14f), new Vector3(.16f, .034f, .047f), black);
-            Cube("SafetyLever", extinguisher, new Vector3(1.84f, .891f, -.14f), new Vector3(.16f, .012f, .037f), steel, new Vector3(0, 0, -9));
-            Cable("Hose", extinguisher, new[] { new Vector3(1.80f, .79f, -.14f), new Vector3(1.66f, .79f, -.14f), new Vector3(1.61f, .67f, -.14f), new Vector3(1.63f, .50f, -.14f) }, .017f, black);
-            Cylinder("Horn", extinguisher, new Vector3(1.63f, .44f, -.14f), .069f, .16f, black);
-            Cube("ExtinguisherLabel", extinguisher, new Vector3(1.81f, .48f, -.254f), new Vector3(.15f, .23f, .004f), white);
-            Label("ExtinguisherLabelText", extinguisher, "CO<sub>2</sub>\n灭火器", new Vector3(1.81f, .48f, -.259f), new Vector2(.15f, .2f), .50f, new Color(.13f, .21f, .2f));
-            Cylinder("FootRing", extinguisher, new Vector3(1.81f, .145f, -.14f), .23f, .025f, black);
-            Cube("ExtinguisherFloorMark", extinguisher, new Vector3(1.81f, .007f, -.14f), new Vector3(.50f, .007f, .50f), teal);
-            Label("FirePointLabel", extinguisher, "FIRE POINT", new Vector3(1.81f, .013f, -.47f), new Vector2(.54f, .15f), .7f, new Color(.78f, .87f, .84f), new Vector3(90, 0, 0));
-            Action(extinguisher, LabAction.Extinguish, "使用二氧化碳灭火器", new Vector3(1.77f, .50f, -.14f), new Vector3(.39f, .88f, .31f));
+            extinguisher.localPosition = new Vector3(1.81f, .43f, -.14f);
+            Cylinder("CylinderBody", extinguisher, Vector3.zero, .22f, .57f, red);
+            Sphere("CylinderShoulder", extinguisher, new Vector3(0f, .283f, 0f), new Vector3(.22f, .12f, .22f), red);
+            Cylinder("Valve", extinguisher, new Vector3(0f, .37f, 0f), .051f, .10f, brass);
+            Cube("CarryHandle", extinguisher, new Vector3(.03f, .425f, 0f), new Vector3(.16f, .034f, .047f), black);
+            Transform triggerLever = Group("TriggerLever", extinguisher);
+            triggerLever.localPosition = new Vector3(-.035f, .461f, 0f);
+            triggerLever.localRotation = Quaternion.Euler(0, 0, -9);
+            Cube("SafetyLever", triggerLever, new Vector3(.065f, 0f, 0f), new Vector3(.16f, .012f, .037f), steel);
+            Transform horn = Group("HornAimPivot", extinguisher);
+            horn.localPosition = new Vector3(-.18f, .18f, 0f);
+            horn.localRotation = Quaternion.Euler(90f, 0, 0);
+            Cylinder("Horn", horn, new Vector3(0f, 0f, .08f), .069f, .16f, black, new Vector3(90, 0, 0));
+            Cylinder("HornMouth", horn, new Vector3(0f, 0f, .154f), .084f, .012f, black, new Vector3(90, 0, 0));
+            Transform outlet = Group("SprayNozzle", horn);
+            outlet.localPosition = new Vector3(0f, 0f, .165f);
+            LineRenderer hoseLine = Line("FlexibleHose", extinguisher, black, .017f, 4);
+            // Reuse a project-saved material: line vertex colours communicate aim validity.
+            Material guideMaterial = ParticleMaterial(false);
+            LineRenderer guide = Line("NozzleAimGuide", extinguisher, guideMaterial, .003f, 2);
+            guide.enabled = false;
+            Renderer aimMarker = Sphere("NozzleAimMarker", extinguisher, Vector3.zero, Vector3.one * .025f,
+                Surface("Lab_AimMarker_MAT", new Color(1f, .65f, .12f), 0, .2f, new Color(.4f, .2f, .015f)));
+            aimMarker.enabled = false;
+            ParticleSystem spray = Particle("CO2Spray", outlet, Vector3.zero, new Color(.88f, .98f, 1f, .8f), .40f, .10f, 5.5f, 90f, false);
+            spray.transform.localRotation = Quaternion.identity;
+            var sprayMain = spray.main;
+            sprayMain.maxParticles = 160;
+            var sprayShape = spray.shape;
+            sprayShape.angle = ExtinguisherInteraction.SprayHalfAngle;
+            sprayShape.radius = .025f;
+            var sprayNoise = spray.noise;
+            sprayNoise.strength = .035f;
+            var sprayFade = spray.colorOverLifetime;
+            var sprayGradient = new Gradient();
+            sprayGradient.SetKeys(new[] { new GradientColorKey(Color.white, 0f), new GradientColorKey(new Color(.83f, .95f, 1f), 1f) },
+                new[] { new GradientAlphaKey(.0f, 0f), new GradientAlphaKey(.65f, .08f), new GradientAlphaKey(0f, 1f) });
+            sprayFade.color = new ParticleSystem.MinMaxGradient(sprayGradient);
+            Cube("ExtinguisherLabel", extinguisher, new Vector3(0f, .05f, -.114f), new Vector3(.15f, .23f, .004f), white);
+            Label("ExtinguisherLabelText", extinguisher, "CO<sub>2</sub>\n灭火器", new Vector3(0f, .05f, -.119f), new Vector2(.15f, .2f), .50f, new Color(.13f, .21f, .2f));
+            Cylinder("FootRing", extinguisher, new Vector3(0f, -.285f, 0f), .23f, .025f, black);
+            Action(extinguisher, LabAction.Extinguish, "抓取灭火器，瞄准后按住压把喷射", new Vector3(-.04f, .07f, 0f), new Vector3(.39f, .88f, .31f));
+            var portableTool = extinguisher.gameObject.AddComponent<ExtinguisherInteraction>();
+            portableTool.Configure(Object.FindObjectOfType<JouleExperimentManager>(), circuitFrame,
+                horn, outlet, triggerLever, spray, hoseLine, guide, aimMarker);
+        }
+
+        private static LineRenderer Line(string name, Transform parent, Material material, float width, int count)
+        {
+            var line = Group(name, parent).gameObject.AddComponent<LineRenderer>();
+            line.sharedMaterial = material;
+            line.useWorldSpace = true;
+            line.widthMultiplier = width;
+            line.positionCount = count;
+            line.numCapVertices = 4;
+            line.numCornerVertices = 4;
+            line.shadowCastingMode = ShadowCastingMode.Off;
+            line.receiveShadows = false;
+            return line;
         }
 
         private static Transform Group(string name, Transform parent)

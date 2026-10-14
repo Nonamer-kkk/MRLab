@@ -19,8 +19,8 @@ namespace MRLab.Joule
     }
 
     /// <summary>
-    /// PC presentation controller. It owns the deterministic model and its
-    /// replay buffer, while UI/input scripts call the small public command API.
+    /// Owns the deterministic model, disposal workflow, and replay buffer.
+    /// Platform-specific input scripts submit commands and spray hit state only.
     /// </summary>
     public sealed class JouleExperimentManager : MonoBehaviour
     {
@@ -46,6 +46,8 @@ namespace MRLab.Joule
         private float _replayCursor;
         private bool _hasIncident;
         private bool _extinguished;
+        private bool _sprayTriggerHeld;
+        private bool _sprayOnTarget;
         private ExperimentPhase _phaseBeforeReview;
         private int _sampleStepCounter;
 
@@ -53,11 +55,22 @@ namespace MRLab.Joule
         public IReadOnlyList<JouleSample> PreviousHistory => _previousHistory;
         public IReadOnlyList<string> Events => _events;
         public string LastMessage { get; private set; } = "请先检查实验台。";
+        public bool CanSelectFaultLocation => !PowerOn && !IsReviewing
+            && (Phase == ExperimentPhase.Inspection || Phase == ExperimentPhase.Ready);
+        public bool SprayActive => _sprayTriggerHeld && CanSpray
+            && SimulationSpeed > 0f && !float.IsInfinity(SimulationSpeed);
+        public bool SprayOnTarget => SprayActive && _sprayOnTarget;
+        public float ExtinguishProgress { get; private set; }
+        public int ResetVersion { get; private set; }
 
         public event Action Changed;
 
         private const float FixedStep = 0.02f;
         private const int HistoryLimit = 18000;
+        public const float ExtinguishDuration = 3f;
+
+        private bool CanSpray => !PowerOn && !IsReviewing && AlarmRaised
+            && Phase == ExperimentPhase.Isolated && _model != null && _model.Burning;
 
         private void Awake()
         {
@@ -68,6 +81,21 @@ namespace MRLab.Joule
         private void Update()
         {
             AdvanceFrame(Time.deltaTime);
+        }
+
+        private void OnDisable()
+        {
+            ClearSprayInput();
+        }
+
+        private void OnApplicationFocus(bool hasFocus)
+        {
+            if (!hasFocus) ClearSprayInput();
+        }
+
+        private void OnApplicationPause(bool paused)
+        {
+            if (paused) ClearSprayInput();
         }
 
         private void AdvanceFrame(float elapsed)
@@ -147,6 +175,8 @@ namespace MRLab.Joule
             _model.SetPower(true);
             Phase = ExperimentPhase.Running;
             _extinguished = false;
+            ExtinguishProgress = 0f;
+            ClearSprayInput();
             Sample = _model.Sample;
             DisplaySample = Sample;
             CaptureSample();
@@ -244,7 +274,7 @@ namespace MRLab.Joule
             AlarmRaised = true;
             if (_model.Burning)
             {
-                SetMessage("报警已完成。已确认断电，可以使用灭火器。");
+                SetMessage("报警已完成。拖动灭火器，将喷口对准火点，按住喷射开关灭火。");
             }
             else
             {
@@ -260,32 +290,95 @@ namespace MRLab.Joule
         {
             EnsureModel();
             if (!CanOperateLive()) return;
+            if (!CheckSpraySafety()) return;
+            SetMessage("拖动灭火器，对准火点并按住喷射开关；有效喷射累计 3 秒后扑灭明火。");
+        }
+
+        /// <summary>
+        /// Supplies held trigger and hit state from any input adapter. Releasing or
+        /// missing pauses progress; only fixed simulation steps can complete disposal.
+        /// </summary>
+        public void SetSprayInput(bool triggerHeld, bool onTarget)
+        {
+            EnsureModel();
+            if (IsReviewing)
+            {
+                ClearSprayInput();
+                return;
+            }
+
+            bool wasHeld = _sprayTriggerHeld;
+            bool wasOnTarget = _sprayOnTarget;
+            _sprayTriggerHeld = triggerHeld;
+            _sprayOnTarget = _sprayTriggerHeld && onTarget;
+            if (!triggerHeld)
+            {
+                if (wasHeld) NotifyChanged();
+                return;
+            }
+
+            if (!wasHeld)
+            {
+                if (!CheckSpraySafety()) return;
+                SetMessage(onTarget
+                    ? "喷射已命中火点，请保持按压并持续瞄准。"
+                    : "正在喷射，尚未命中火点。请移动灭火器调整喷口方向。");
+            }
+            else if (CanSpray && wasOnTarget != _sprayOnTarget)
+            {
+                SetMessage(onTarget
+                    ? "喷射已命中火点，灭火进度继续累积。"
+                    : "喷射偏离火点，灭火进度暂停。请重新瞄准。");
+            }
+        }
+
+        /// <summary>Reports input-mode guidance without exposing simulation internals.</summary>
+        public void SetInteractionMessage(string message)
+        {
+            if (!string.IsNullOrWhiteSpace(message)) SetMessage(message);
+        }
+
+        private bool CheckSpraySafety()
+        {
             if (PowerOn)
             {
                 SetMessage("灭火前必须先隔离电源。");
-                return;
+                return false;
             }
 
             if (!AlarmRaised)
             {
                 SetMessage("请先触发报警，再执行灭火操作。");
-                return;
+                return false;
             }
 
             if (!_model.Burning)
             {
                 SetMessage(_extinguished ? "明火已扑灭，请保持隔离并进入复盘。" : "当前无明火，无需喷射灭火剂。可以进入复盘。");
-                return;
+                return false;
             }
 
+            if (Phase != ExperimentPhase.Isolated)
+            {
+                SetMessage("请完成电源隔离和报警后，再按住喷射开关。");
+                return false;
+            }
+
+            return true;
+        }
+
+        private void CompleteExtinguishing()
+        {
             _model.Extinguish();
             _extinguished = true;
+            ExtinguishProgress = 1f;
+            ClearSprayInput();
             Phase = ExperimentPhase.Completed;
             Sample = _model.Sample;
             DisplaySample = Sample;
             SetMessage("已完成灭火处置。保持隔离，进入复盘查看温升曲线。");
             CaptureSample();
-            RecordEvent("确认断电后扑灭明火");
+            RecordEvent("确认断电并报警后，累计有效喷射 3 秒扑灭明火");
             NotifyChanged();
         }
 
@@ -312,6 +405,9 @@ namespace MRLab.Joule
             ThermalOverlay = true;
             _hasIncident = false;
             _extinguished = false;
+            ExtinguishProgress = 0f;
+            ClearSprayInput();
+            ResetVersion++;
             Phase = ExperimentPhase.Inspection;
             Parameters = (Parameters ?? new JouleParameters()).Clone();
             Parameters.Sanitize();
@@ -351,6 +447,7 @@ namespace MRLab.Joule
             }
 
             CaptureSample();
+            ClearSprayInput();
             _phaseBeforeReview = Phase;
             IsReviewing = true;
             ReplayPlaying = false;
@@ -451,13 +548,28 @@ namespace MRLab.Joule
             NotifyChanged();
         }
 
+        public bool SetFaultLocation(int wire, float position)
+        {
+            if (!CanEditParameters()) return false;
+            if (wire < 0 || wire > 3 || float.IsNaN(position) || float.IsInfinity(position)
+                || position < 0f || position > 1f)
+            {
+                SetMessage("请选择实验导线上的有效故障位置。");
+                return false;
+            }
+
+            Parameters.FaultWire = wire;
+            Parameters.FaultPosition = position;
+            ApplyParameterChange();
+            SetMessage("故障位置已更新。接通电源后注入故障，所选位置将出现热点。");
+            NotifyChanged();
+            return true;
+        }
+
+        // Compatibility for earlier saved UI callbacks; new input uses continuous locations.
         public void SetFaultPosition(int position)
         {
-            if (!CanEditParameters()) return;
-            Parameters.FaultPosition = Mathf.Clamp(position, 0, 2);
-            ApplyParameterChange();
-            SetMessage("已更新故障位置。");
-            NotifyChanged();
+            SetFaultLocation(1, Mathf.Clamp(position, 0, 2) * 0.5f);
         }
 
         public string ExportCsv()
@@ -471,11 +583,11 @@ namespace MRLab.Joule
             string directory = Path.Combine(Application.persistentDataPath, "Results");
             string path = Path.GetFullPath(Path.Combine(directory, "JouleExperiment_" + DateTime.Now.ToString("yyyyMMdd_HHmmss_fff", CultureInfo.InvariantCulture) + "_" + Guid.NewGuid().ToString("N").Substring(0, 6) + ".csv"));
             var builder = new StringBuilder();
-            builder.AppendLine("Time_s,Current_A,Temperature_C,ElectricalHeat_J,LocalHeatingPower_W,Stage,Powered,BreakerTripped,Fault,Voltage_V,WireArea_mm2,LoadResistance_ohm,ContactResistance_ohm,ProtectionEnabled,FaultPosition");
+            builder.AppendLine("Time_s,Current_A,Temperature_C,ElectricalHeat_J,LocalHeatingPower_W,Stage,Powered,BreakerTripped,Fault,Voltage_V,WireArea_mm2,LoadResistance_ohm,ContactResistance_ohm,ProtectionEnabled,FaultWire,FaultPosition");
             for (int i = 0; i < _history.Count; i++)
             {
                 JouleSample sample = _history[i];
-                builder.AppendLine(string.Join(",", sample.Time.ToString("F3", CultureInfo.InvariantCulture), sample.Current.ToString("F3", CultureInfo.InvariantCulture), sample.Temperature.ToString("F3", CultureInfo.InvariantCulture), sample.HeatEnergy.ToString("F3", CultureInfo.InvariantCulture), sample.HeatingPower.ToString("F3", CultureInfo.InvariantCulture), sample.Stage, sample.Powered, sample.BreakerTripped, sample.Fault, Parameters.Voltage.ToString("F3", CultureInfo.InvariantCulture), Parameters.WireArea.ToString("F3", CultureInfo.InvariantCulture), Parameters.LoadResistance.ToString("F3", CultureInfo.InvariantCulture), Parameters.ContactResistance.ToString("F3", CultureInfo.InvariantCulture), Parameters.ProtectionEnabled, Parameters.FaultPosition));
+                builder.AppendLine(string.Join(",", sample.Time.ToString("F3", CultureInfo.InvariantCulture), sample.Current.ToString("F3", CultureInfo.InvariantCulture), sample.Temperature.ToString("F3", CultureInfo.InvariantCulture), sample.HeatEnergy.ToString("F3", CultureInfo.InvariantCulture), sample.HeatingPower.ToString("F3", CultureInfo.InvariantCulture), sample.Stage, sample.Powered, sample.BreakerTripped, sample.Fault, Parameters.Voltage.ToString("F3", CultureInfo.InvariantCulture), Parameters.WireArea.ToString("F3", CultureInfo.InvariantCulture), Parameters.LoadResistance.ToString("F3", CultureInfo.InvariantCulture), Parameters.ContactResistance.ToString("F3", CultureInfo.InvariantCulture), Parameters.ProtectionEnabled, sample.FaultWire, sample.FaultPosition.ToString("F6", CultureInfo.InvariantCulture)));
             }
 
             try
@@ -497,7 +609,7 @@ namespace MRLab.Joule
         private bool CanEditParameters()
         {
             EnsureModel();
-            if (PowerOn || IsReviewing || (Phase != ExperimentPhase.Inspection && Phase != ExperimentPhase.Ready))
+            if (!CanSelectFaultLocation)
             {
                 SetMessage("运行中不能修改参数，请先复位实验。");
                 return false;
@@ -511,6 +623,11 @@ namespace MRLab.Joule
             JouleSample previous = Sample;
             _model.Step(dt);
             Sample = _model.Sample;
+            if (SprayOnTarget)
+            {
+                ExtinguishProgress = Mathf.Min(1f, ExtinguishProgress + dt / ExtinguishDuration);
+                if (ExtinguishProgress >= 1f - 0.00001f) CompleteExtinguishing();
+            }
             _sampleStepCounter++;
             if (_sampleStepCounter >= 5)
             {
@@ -591,6 +708,12 @@ namespace MRLab.Joule
             PowerOn = false;
             Sample = _model.Sample;
             DisplaySample = Sample;
+        }
+
+        private void ClearSprayInput()
+        {
+            _sprayTriggerHeld = false;
+            _sprayOnTarget = false;
         }
 
         private void SetMessage(string message)

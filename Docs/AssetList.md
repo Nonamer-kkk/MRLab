@@ -28,9 +28,17 @@
 
 本阶段未使用外部音频或图像；如后续加入，须先更新资产清单和第三方登记。无独立贴图的程序材质标记为“无贴图”，不创建虚假的源文件记录。
 
+## 直接操控交互资源
+
+`CO2Extinguisher` 继续使用本项目已有程序模型，瓶身位置与喷嘴朝向由用户操作实时控制，不使用一次点击后播放的灭火动画。喷射效果由开关持续状态驱动，熄火由有效命中累计时间决定。导线几何路径由 `WirePathGeometry` 共用，显示热点和选择位置均沿实际导线计算。上述空间交互代码不依赖 PC 输入，后续 VR 可复用器材和相同的拿取/移动/瞄准/扳机接口。
+
+`CO2Extinguisher.prefab` 的根原点调整到瓶身，包含可转向的 `HornAimPivot` / `SprayNozzle`、`TriggerLever`、柔性软管、`CO2Spray`、瞄准线和瞄准标记。`ExtinguisherInteraction` 统一控制器材姿态和触发状态。`ExtinguisherStand.prefab` 单独保存地面标记与器材归位提示。选中的故障位置由线路上的 `SelectedFaultLocation` 标记显示。
+
+新增标记材质为 `Lab_FaultMarker_MAT` 和 `Lab_AimMarker_MAT`，仍保存在 `Art/Materials/GeneratedLab`，不使用外部纹理。CO2 喷雾与瞄准线复用已有 `Lab_Smoke_MAT` 和 `Lab_SoftParticle_Alpha.asset`。本次资源已于 2026-10-14 重新生成，并核对磁盘文件与保存场景/Prefab 的实际引用。
+
 ## 正式生成资源逐项索引
 
-本索引对应 2026-09-28 保存的 PC 主场景和 Prefab，共登记 114 个模型网格、20 个材质、1 个贴图和 16 个 Prefab。以下路径均相对工程根目录，列出的资源均已生成。模型与材质的对应关系来自主场景和 Prefab 的实际 MeshFilter、MeshRenderer 引用，材质与贴图的对应关系来自材质资源中的 Texture 引用。材质名称对应下一表中的唯一材质路径，便于追查共享关系。
+本索引对应 2026-10-14 保存的 PC 主场景和 Prefab，共登记 120 个模型网格、22 个材质、1 个贴图和 17 个 Prefab。本次相对上版新增 6 个网格、2 个材质和 1 个 Prefab。以下路径均相对工程根目录，列出的资源均已生成。模型与材质的对应关系来自主场景和 Prefab 的实际 MeshFilter、MeshRenderer 引用，材质与贴图的对应关系来自材质资源中的 Texture 引用。材质名称对应下一表中的唯一材质路径，便于追查共享关系。
 
 ### 模型及实际材质引用
 
@@ -38,6 +46,12 @@
 
 | 模型资产基础名称 | 模型资源路径 | 实际引用的共享材质 |
 | --- | --- | --- |
+| `Lab_Cube_0p00700_0p00700_0p04500` | `Assets/_Project/Art/Models/GeneratedLab/Lab_Cube_0p00700_0p00700_0p04500.asset` | `Lab_FaultMarker_MAT` |
+| `Lab_Cube_0p04500_0p00700_0p00700` | `Assets/_Project/Art/Models/GeneratedLab/Lab_Cube_0p04500_0p00700_0p00700.asset` | `Lab_FaultMarker_MAT` |
+| `Lab_Cylinder_0p01100_0p03092_0p01100` | `Assets/_Project/Art/Models/GeneratedLab/Lab_Cylinder_0p01100_0p03092_0p01100.asset` | `Lab_Brass_MAT` |
+| `Lab_Cylinder_0p01100_0p04757_0p01100` | `Assets/_Project/Art/Models/GeneratedLab/Lab_Cylinder_0p01100_0p04757_0p01100.asset` | `Lab_Brass_MAT` |
+| `Lab_Cylinder_0p08400_0p00600_0p08400` | `Assets/_Project/Art/Models/GeneratedLab/Lab_Cylinder_0p08400_0p00600_0p08400.asset` | `Lab_Rubber_MAT` |
+| `Lab_Sphere_0p02500_0p02500_0p02500` | `Assets/_Project/Art/Models/GeneratedLab/Lab_Sphere_0p02500_0p02500_0p02500.asset` | `Lab_AimMarker_MAT` |
 | `Lab_Cube_0p00300_0p01200_0p00300` | `Assets/_Project/Art/Models/GeneratedLab/Lab_Cube_0p00300_0p01200_0p00300.asset` | `Lab_Porcelain_MAT` |
 | `Lab_Cube_0p00300_0p14000_0p01400` | `Assets/_Project/Art/Models/GeneratedLab/Lab_Cube_0p00300_0p14000_0p01400.asset` | `Lab_Rubber_MAT` |
 | `Lab_Cube_0p00400_0p00200_0p01400` | `Assets/_Project/Art/Models/GeneratedLab/Lab_Cube_0p00400_0p00200_0p01400.asset` | `Lab_Graphite_MAT` |
@@ -165,6 +179,8 @@
 | `Lab_CeilingLight` | `Assets/_Project/Art/Materials/GeneratedLab/Lab_CeilingLight_MAT.mat` | 无贴图；使用颜色、金属度、光滑度或自发光参数 |
 | `Lab_Ceramic` | `Assets/_Project/Art/Materials/GeneratedLab/Lab_Ceramic_MAT.mat` | 无贴图；使用颜色、金属度、光滑度或自发光参数 |
 | `Lab_DisplayGlass` | `Assets/_Project/Art/Materials/GeneratedLab/Lab_DisplayGlass_MAT.mat` | 无贴图；使用颜色、金属度、光滑度或自发光参数 |
+| `Lab_AimMarker` | `Assets/_Project/Art/Materials/GeneratedLab/Lab_AimMarker_MAT.mat` | 无贴图；喷嘴瞄准位置标记 |
+| `Lab_FaultMarker` | `Assets/_Project/Art/Materials/GeneratedLab/Lab_FaultMarker_MAT.mat` | 无贴图；连续故障选点标记 |
 | `Lab_Flame` | `Assets/_Project/Art/Materials/GeneratedLab/Lab_Flame_MAT.mat` | `Lab_SoftParticle_Alpha` |
 | `Lab_Floor` | `Assets/_Project/Art/Materials/GeneratedLab/Lab_Floor_MAT.mat` | 无贴图；使用颜色、金属度、光滑度或自发光参数 |
 | `Lab_Graphite` | `Assets/_Project/Art/Materials/GeneratedLab/Lab_Graphite_MAT.mat` | 无贴图；使用颜色、金属度、光滑度或自发光参数 |
@@ -202,6 +218,7 @@
 | `AlarmButton` | `Assets/_Project/Prefabs/Interactables/AlarmButton.prefab` | 交互对象 |
 | `CircuitBreaker` | `Assets/_Project/Prefabs/Interactables/CircuitBreaker.prefab` | 交互对象 |
 | `CO2Extinguisher` | `Assets/_Project/Prefabs/Interactables/CO2Extinguisher.prefab` | 交互对象 |
+| `ExtinguisherStand` | `Assets/_Project/Prefabs/Interactables/ExtinguisherStand.prefab` | 灭火器原位标记 |
 | `FaultInjectionHandle` | `Assets/_Project/Prefabs/Interactables/FaultInjectionHandle.prefab` | 交互对象 |
 | `LaboratoryInterface` | `Assets/_Project/Prefabs/UI/LaboratoryInterface.prefab` | 界面 |
 

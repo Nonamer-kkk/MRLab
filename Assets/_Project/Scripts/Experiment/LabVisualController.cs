@@ -20,6 +20,7 @@ namespace MRLab.Joule
         [SerializeField] private ParticleSystem sparks;
         [SerializeField] private Light hotspotLight;
         [SerializeField] private GameObject thermalMarker;
+        [SerializeField] private Transform selectedFaultMarker;
 
         [SerializeField] private JouleExperimentManager experiment;
         private MaterialPropertyBlock properties;
@@ -29,6 +30,7 @@ namespace MRLab.Joule
         private bool lastSparks;
         private float nextReadoutUpdate;
         private float lastSampleTime = -1f;
+        private Color[] originalWireColors;
 
         public Transform FocusPoint => focusPoint;
 
@@ -49,7 +51,7 @@ namespace MRLab.Joule
             Renderer breaker, Renderer hotSpot, GameObject jumper, Transform lever,
             TMP_Text supplyText, TMP_Text temperatureText, ParticleSystem smokeSystem,
             ParticleSystem flameSystem, ParticleSystem sparkSystem, Light glow,
-            GameObject thermal)
+            GameObject thermal, Transform faultMarker)
         {
             focusPoint = focus;
             wireRenderers = conductors;
@@ -65,6 +67,8 @@ namespace MRLab.Joule
             sparks = sparkSystem;
             hotspotLight = glow;
             thermalMarker = thermal;
+            selectedFaultMarker = faultMarker;
+            CacheWireColors();
         }
 
         private void Update()
@@ -80,10 +84,8 @@ namespace MRLab.Joule
 
             float temperature = (float)sample.Temperature;
             float warmth = Mathf.InverseLerp(60f, 360f, temperature);
-            int position = experiment == null || experiment.Parameters == null
-                ? 1 : Mathf.Clamp(experiment.Parameters.FaultPosition, 0, 2);
-            float hotX = position == 0 ? -.13f : position == 2 ? .18f : .03f;
-            SetHotspotPosition(hotX);
+            Vector3 hotspot = WirePathGeometry.Point(sample.FaultWire, sample.FaultPosition);
+            SetHotspotPosition(hotspot);
             bool reset = sample.Time <= .001f && (lastSampleTime > .001f || !hasRendered);
             if (reset)
             {
@@ -107,14 +109,20 @@ namespace MRLab.Joule
                 jacket = Color.Lerp(new Color(.08f, .23f, .75f), new Color(1f, .11f, .025f), warmth);
             Color radiation = warmth > .25f ? new Color(1f, .08f, .008f) * warmth * (thermalOverlay ? 2f : .7f) : Color.black;
             if (wireRenderers != null)
-                foreach (Renderer wire in wireRenderers)
+            {
+                if (originalWireColors == null || originalWireColors.Length != wireRenderers.Length) CacheWireColors();
+                for (int index = 0; index < wireRenderers.Length; index++)
                 {
+                    Renderer wire = wireRenderers[index];
                     if (wire == null)
                         continue;
-                    float localHeat = 1f - Mathf.Clamp01(Mathf.Abs(wire.transform.localPosition.x - hotX) / .5f);
-                    Color localJacket = Color.Lerp(thermalOverlay ? new Color(.08f, .23f, .75f) : new Color(.24f, .12f, .09f), jacket, localHeat);
+                    float distance = Vector3.Distance(wire.bounds.ClosestPoint(transform.TransformPoint(hotspot)), transform.TransformPoint(hotspot));
+                    float localHeat = 1f - Mathf.Clamp01(distance / .30f);
+                    Color ambient = thermalOverlay ? new Color(.08f, .23f, .75f) : originalWireColors[index];
+                    Color localJacket = Color.Lerp(ambient, jacket, localHeat * (charred || thermalOverlay ? 1f : warmth));
                     SetAppearance(wire, localJacket, radiation * localHeat);
                 }
+            }
             SetAppearance(hotspotRenderer, jacket, radiation * 1.3f);
             SetAppearance(powerIndicator, energized ? new Color(.05f, .8f, .52f) : new Color(.07f, .15f, .15f), energized ? new Color(.02f, 1f, .3f) : Color.black);
             SetAppearance(breakerIndicator, sample.BreakerTripped ? new Color(1f, .25f, .07f) : new Color(.12f, .48f, .32f), sample.BreakerTripped ? new Color(1f, .13f, .02f) : Color.black);
@@ -145,22 +153,36 @@ namespace MRLab.Joule
             lastSampleTime = sample.Time;
         }
 
-        private void SetHotspotPosition(float hotX)
+        private void CacheWireColors()
         {
+            if (wireRenderers == null) return;
+            originalWireColors = new Color[wireRenderers.Length];
+            for (int index = 0; index < wireRenderers.Length; index++)
+                originalWireColors[index] = wireRenderers[index] != null && wireRenderers[index].sharedMaterial != null
+                    ? wireRenderers[index].sharedMaterial.GetColor("_BaseColor") : new Color(.24f, .12f, .09f);
+        }
+
+        private void SetHotspotPosition(Vector3 hotspot)
+        {
+            Vector3 worldHotspot = transform.TransformPoint(hotspot);
             if (hotspotRenderer != null)
-                hotspotRenderer.transform.localPosition = new Vector3(hotX, .96f, -.1f);
+                hotspotRenderer.transform.position = worldHotspot;
             if (smoke != null)
-                smoke.transform.localPosition = new Vector3(hotX, .985f, -.1f);
+                smoke.transform.position = worldHotspot + transform.up * .025f;
             if (flame != null)
-                flame.transform.localPosition = new Vector3(hotX, .985f, -.1f);
+                flame.transform.position = worldHotspot + transform.up * .025f;
             if (sparks != null)
-                sparks.transform.localPosition = new Vector3(hotX, .985f, -.1f);
+                sparks.transform.position = worldHotspot + transform.up * .025f;
             if (hotspotLight != null)
-                hotspotLight.transform.localPosition = new Vector3(hotX, 1.105f, -.1f);
+                hotspotLight.transform.position = worldHotspot + transform.up * .145f;
             if (thermalMarker != null)
-                thermalMarker.transform.localPosition = new Vector3(hotX - .03f, 0f, 0f);
+                thermalMarker.transform.position = transform.TransformPoint(hotspot - new Vector3(.03f, .96f, -.1f));
             if (focusPoint != null)
-                focusPoint.localPosition = new Vector3(hotX, .99f, -.02f);
+                focusPoint.position = worldHotspot + transform.up * .03f;
+            if (selectedFaultMarker != null)
+                selectedFaultMarker.position = worldHotspot;
+            if (faultJumper != null)
+                faultJumper.transform.position = worldHotspot;
         }
 
         private static void ClearEffect(ParticleSystem effect)

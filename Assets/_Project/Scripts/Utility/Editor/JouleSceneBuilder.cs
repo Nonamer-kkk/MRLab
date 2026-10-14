@@ -79,7 +79,7 @@ namespace MRLab.Joule.Editor
             if(rig!=null)foreach(Transform child in rig.Cast<Transform>().ToArray())
                 if(child.name=="DCPowerSupply"||child.name=="LoadResistor"||child.name=="TemperatureSensor"||child.name=="TestWireHolder")Prefab(child.gameObject,"Devices");
 
-            PlayerSettings.companyName="MRLab";PlayerSettings.productName="JouleLab_E10";PlayerSettings.bundleVersion="1.0.0";
+            PlayerSettings.companyName="MRLab";PlayerSettings.productName="JouleLab_E10";PlayerSettings.bundleVersion="1.1.0";
             PlayerSettings.colorSpace=ColorSpace.Linear;PlayerSettings.SetArchitecture(BuildTargetGroup.Standalone,1);
             PlayerSettings.defaultScreenWidth=1600;PlayerSettings.defaultScreenHeight=900;PlayerSettings.fullScreenMode=FullScreenMode.Windowed;
             PlayerSettings.resizableWindow=true;PlayerSettings.runInBackground=true;
