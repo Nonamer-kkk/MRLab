@@ -11,11 +11,15 @@
 | 输入系统 | Unity Input System 1.14.2 |
 | 文字 | TMP 3.0.7 + 项目内 Noto Sans CJK SC |
 | MR SDK | Meta XR SDK 205（后续 MR 阶段接入；本次 PC 版暂不安装） |
-| 当前开发阶段 / 版本 | PC / 1.1.0 |
+| 当前开发阶段 / 版本 | PC / 1.2.0，已加入 Hunyuan3D 图片建模入口 |
 
 ## 项目范围
 
 本阶段制作实验室内的单人、单线路焦耳定律实验，包含连续温升、材料变化和短路起火，不模拟宿舍环境。MR/CAVE 仅保留场景、交互脚本和 Build 目录，后续复用同一实验核心。
+
+## Hunyuan3D 图片建模
+
+当前新增的建模入口是本地 Hunyuan3D-2mini Turbo 推理服务：在 Unity 菜单 `MRLab → Hunyuan3D → 从图片生成模型` 中选择外部图片，点击生成后自动导入 OBJ 并放置到当前场景。该路径不读取之前的 Unity 网格。完整启动和验证说明见 `Hunyuan3D_Integration.md` 与 `Assignment02/Hunyuan3D_Result.md`。
 
 ## 启动
 
@@ -56,6 +60,14 @@
 已实现实验室场景、单线路电路/热学/材料模型、PC 交互与 TMP 中文 UI、短路/接触不良、保护器、断电/报警/灭火、实时曲线、回放、双轮对比、CSV 和 Reset。本次加入沿导线自由选点、灭火器拖动/瞄准/持续喷射和供 VR 复用的空间交互接口。2026-10-14 Windows x86-64 构建成功，0 错误、0 警告，16 项自动测试通过；细项与鼠标实测结果以 `PCValidation.md` 为准。
 
 历史 Player 验证包含干净启动、巡检、线径切换、通电、短路电流突增、连续温升及材料状态、错误灭火拦截、断电/报警、复盘拖动、CSV 导出、重置与双轮曲线；这些历史结果不替代本次直接操控交互的验证。
+
+## 小作业 2：三维建模
+
+本次 Hunyuan3D 验收使用新制作图片完成真实推理，Unity 导入后生成模型可在当前场景中移动、旋转、缩放并参与 PC 构建。
+
+本次 Unity 原生验收构建成功，0 错误、0 警告，16 项模型测试通过；材质在最终构建前后保持一致。作业对应关系、复现及打包说明见 `Assignment02/README.md`；全清单对比、参数、证据与验证边界见 `Assignment02/ModelingReport.md`。最终验收日志副本为 `Assignment02/Validation/Assignment02_ValidateAndBuild_Final.log`。编号说明文件和输入/结果 ZIP 位于 `Docs` 根目录，完整工程提交包由 `SourceAssets/Assignment02/tools/package_assignment.py` 在验收后生成。
+
+最终 Player 已启动并保存运行截图；本次日志未发现异常或缺字告警。PC 构建和 Hunyuan3D 编辑器入口均已完成本机验证。
 
 ## 已知问题与边界
 

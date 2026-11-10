@@ -36,3 +36,10 @@ crashlytics-build.properties
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+# Assignment deliverables and raw source material (kept locally, not uploaded)
+SourceAssets/
+Docs/Assignment02/
+Docs/Assignment03/
+Docs/*.zip
+Docs/*.txt

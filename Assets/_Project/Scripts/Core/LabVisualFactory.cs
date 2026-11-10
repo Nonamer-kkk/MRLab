@@ -383,6 +383,15 @@ namespace MRLab.Joule
             string path = ModelDirectory + "/" + key + ".asset";
             if (!Application.isPlaying)
             {
+                // Assignment 2 keeps the baseline asset intact. A later scene
+                // regeneration should reuse the verified Blender result too.
+                Mesh optimized = AssetDatabase.LoadAssetAtPath<Mesh>(
+                    "Assets/_Project/Art/Models/Assignment02/Optimized/" + key + ".asset");
+                if (optimized != null)
+                {
+                    Meshes[key] = optimized;
+                    return optimized;
+                }
                 Mesh saved = AssetDatabase.LoadAssetAtPath<Mesh>(path);
                 if (saved == null)
                 {

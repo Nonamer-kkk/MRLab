@@ -2,6 +2,16 @@
 
 本项目采用程序生成的实验室和器材模型，生成资源属于本项目原创资源；TMP 与 Noto 字体另列于 `ThirdPartyAssets.md`。
 
+## 2026-10-25 Hunyuan3D 图片建模入口
+
+`Assets/_Project/Art/Models/HunyuanGenerated/` 保存通过本机 Hunyuan3D 图片推理生成并由 Unity 导入的模型。Unity 编辑器菜单 `MRLab → Hunyuan3D → 从图片生成模型` 可以选择新图片、请求推理、导入 OBJ 并实例化到当前场景。该生成链不使用已有 Unity 网格作为输入；服务代码和启动说明见 `SourceAssets/Hunyuan3D/` 与 `Docs/Hunyuan3D_Integration.md`。
+
+## 小作业 2：Hunyuan3D 图片建模
+
+`SourceAssets/Hunyuan3D/` 保存本地 Hunyuan3D-2mini Turbo 推理服务、启动脚本和验证图片。Unity 菜单 `MRLab → Hunyuan3D → 从图片生成模型` 选择外部 PNG/JPG 后，服务返回新的无纹理 OBJ，Unity 自动导入到 `Assets/_Project/Art/Models/HunyuanGenerated/` 并实例化到当前场景。生成链不读取已有 Unity 网格，权重不进入工程包。
+
+验证模型为 `AI_FireExtinguisher.obj`，Unity 导入后为 124,723 个顶点、239,638 个三角形。算法输入、算法结果和软件结果分别见 `Docs/24371119容易为-22-算法输入.zip`、`Docs/24371119容易为-23-算法结果.zip` 和 `Docs/24371119容易为-25-软件结果.zip`。
+
 | 资产基础名称 | 类型 | Unity 资源路径 | 制作来源 | 状态 |
 | --- | --- | --- | --- | --- |
 | NotoSansCJKsc-Regular | 字体源 | `Assets/_Project/Fonts/NotoSansCJKsc-Regular.otf` | Google Noto CJK，OFL 1.1 | 已存在 |

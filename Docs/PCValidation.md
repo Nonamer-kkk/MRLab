@@ -1,5 +1,28 @@
 # PC 版验收记录
 
+## 2026-10-25：Hunyuan3D 图片建模入口
+
+当前建模路线是本机 Hunyuan3D-2mini Turbo 推理服务。Unity 编辑器从外部图片发起请求，服务返回新生成 OBJ，Unity 自动导入并可在场景中操作；该流程不读取旧 Unity 网格作为 Hunyuan 输入。服务健康检查返回 `ready`、`device=cuda`、`previousUnityMeshesUsed=false`，一次真实推理和 Unity 导入验证记录在 `Logs/HunyuanUnityImportValidation.log`。
+
+## PC 工程验收
+
+以下记录用于说明 Hunyuan3D 入口加入 PC 工程后的构建和运行状态。
+
+| 检查项 | 本次结果与边界 |
+| --- | --- |
+| 建模清单 | 40 项对象、149 个场景网格实例、88 个唯一网格；完整映射到 PC 场景，原始网格资源保留 |
+| Hunyuan3D 模型 | `AI_FireExtinguisher.obj`；Unity 导入后 124,723 个顶点、239,638 个三角形 |
+| 独立审计 | 80 份 OBJ/MTL 与几何 JSON 一致；88 个 Unity 网格索引一致；1 个场景和全部 17 个 Prefab 的非网格引用结构一致 |
+| 结构完整性 | `Assignment02Integration.json`：`structurePreserved`、`allMeshesMapped`、`noMissingScripts` 均为 true |
+| 自动测试 | `JouleModelTests.json`：16 passed / 0 failed；覆盖电热模型、保护器、实验管理、故障选点、灭火器空间操作、Reset、回放和 CSV |
+| 最终构建 | Windows x86-64 成功，0 错误 / 0 警告；原始记录 `Logs/Assignment02_ValidateAndBuild_Final.log` |
+| Player 启动 | 最终 PC Player 已启动，截图见 `Assignment02/Evidence/04_PC_Runtime.png`；本次 Player 日志未发现 Exception、Error 或 TMP 缺字告警 |
+| 单机运行观测 | 1600×900，AMD Ryzen 7 8845H、NVIDIA GeForce RTX 4060 Laptop GPU；30 秒 4,949 帧，平均 164.96 FPS，P95 6.07 ms。原始记录 `Assignment02/Validation/Performance.json` |
+| 性能边界 | 上述为当前硬件和本次运行状态的一次观测，不是优化前后对照，不外推至其他电脑或设备；未单独测烟火高负载 |
+| 材质保存 | 最终构建后 `Assets/_Project/Art/Materials` 无新增修改，发光材质保持原状态 |
+
+算法、软件和图片输入说明见 `Assignment02/README.md` 与 `Assignment02/ModelingReport.md`。原始 Unity Build 日志位于工程 `Logs/`；完整工程 ZIP 不携带 `Logs/`，打包时副本放入 `Docs/Assignment02/Validation/`。
+
 ## 2026-10-14：PC 直接操控更新 / 1.1.0
 
 本节是最新版本记录；下方 2026-09-28 的 1.0.0 记录仅作为历史基线，不代表新交互已全部人工验收。
